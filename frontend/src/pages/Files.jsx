@@ -1,284 +1,178 @@
-import { useQuery } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
-import { getDownloadsQueue, getDownloadsRecent, getDownloadsStats } from "../api/client";
+import { useQuery } from '@tanstack/react-query';
+import { getDownloadsQueue, getDownloadsRecent, getDownloadsStats } from '../api/client';
+import {
+  THEME, btnGhost, btnPrimary, btnSub,
+  PageHeader, StatCard, StatusPill, Section,
+} from '../v1design';
 
-// ── Design system (inline, matches design zip) ────────────────────────────────
-const T = {
-  bg: '#0e1220', panel: '#161a2a', panel2: '#1d2237', sunken: '#0a0d18',
-  border: 'rgba(255,255,255,0.06)', borderStrong: 'rgba(255,255,255,0.12)',
-  text: '#e8e9f2', textDim: 'rgba(232,233,242,0.62)', textMute: 'rgba(232,233,242,0.38)',
-  accent: '#a78bfa', accent2: '#22d3ee', accent3: '#fbbf24',
-  accentSoft: 'rgba(167,139,250,0.16)',
-  statusDone: '#22c55e', statusUpcoming: '#f59e0b', statusEnded: '#ef4444', statusAiring: '#3b82f6',
-};
-const btnGhost  = { background:'transparent', color:T.textDim, border:`1px solid ${T.border}`, borderRadius:7, padding:'5px 9px', font:'500 12px/1 "Space Grotesk"', cursor:'pointer' };
-const btnPrimary = { background:T.accent, color:'#fff', border:'none', borderRadius:7, padding:'6px 12px', font:'600 12px/1 "Space Grotesk"', cursor:'pointer', boxShadow:`0 4px 14px ${T.accent}55` };
-const btnSub    = { background:T.panel2, color:T.text, border:`1px solid ${T.border}`, borderRadius:7, padding:'5px 10px', font:'500 12px/1 "Space Grotesk"', cursor:'pointer' };
+const T = THEME;
 
-// ── Shared design components ──────────────────────────────────────────────────
-
-function PageHeader({ title, subtitle, right }) {
-  return (
-    <div style={{ display:'flex', alignItems:'flex-end', gap:14, paddingBottom:14,
-      borderBottom:`1px solid ${T.border}`, marginBottom:4 }}>
-      <div style={{ display:'flex', flexDirection:'column', lineHeight:1.2 }}>
-        <div style={{ font:'700 22px "Space Grotesk"', color:T.text, letterSpacing:'-0.02em' }}>{title}</div>
-        {subtitle && <div style={{ font:'500 12px JetBrains Mono', color:T.textMute, marginTop:5, letterSpacing:'.02em' }}>{subtitle}</div>}
-      </div>
-      <div style={{ marginLeft:'auto', display:'flex', gap:8, alignItems:'center' }}>{right}</div>
-    </div>
-  );
+function fmtBytes(bytes) {
+  if (!bytes) return '—';
+  const gb = bytes / 1e9;
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  const mb = bytes / 1e6;
+  return `${mb.toFixed(0)} MB`;
 }
 
-function StatCard({ label, value, sub, accent }) {
-  return (
-    <div style={{ flex:1, background:T.panel, border:`1px solid ${T.border}`, borderRadius:10,
-      padding:'14px 16px', display:'flex', flexDirection:'column', gap:4,
-      position:'relative', overflow:'hidden' }}>
-      <div style={{ position:'absolute', left:0, top:0, bottom:0, width:3, background:accent||T.accent }}/>
-      <div style={{ font:'600 10px JetBrains Mono', color:T.textMute, letterSpacing:'.08em', textTransform:'uppercase' }}>{label}</div>
-      <div style={{ font:'700 26px/1 "Space Grotesk"', color:T.text, marginTop:4, fontFeatureSettings:'"tnum"' }}>{value}</div>
-      {sub && <div style={{ font:'500 11px JetBrains Mono', color:T.textDim, marginTop:2 }}>{sub}</div>}
-    </div>
-  );
+function stateStyle(state) {
+  const m = {
+    downloading: { color: T.accent,         label: 'Stahuje se',  icon: '↓' },
+    seeding:     { color: T.accent2,        label: 'Seeduje',     icon: '↑' },
+    completed:   { color: T.statusDone,     label: 'Hotovo',      icon: '✓' },
+    queued:      { color: T.textDim,        label: 'Ve frontě',   icon: '◷' },
+    paused:      { color: T.statusUpcoming, label: 'Pozastaveno', icon: '‖' },
+    error:       { color: T.statusEnded,    label: 'Chyba',       icon: '✕' },
+  };
+  return m[state] || { color: T.textDim, label: state || '—', icon: '?' };
 }
 
-function Section({ title, sub, children }) {
-  return (
-    <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-      <div style={{ display:'flex', alignItems:'baseline', gap:10 }}>
-        <div style={{ font:'700 14px "Space Grotesk"', color:T.text }}>{title}</div>
-        {sub && <div style={{ font:'500 11px JetBrains Mono', color:T.textMute }}>{sub}</div>}
-        <div style={{ flex:1, height:1, background:T.border, marginLeft:6 }}/>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function StatusPill({ color, label, size = 'md' }) {
-  return (
-    <span style={{
-      display:'inline-flex', alignItems:'center', gap:5,
-      padding: size==='sm' ? '2px 7px' : '3px 9px',
-      background:`${color}22`, color, border:`1px solid ${color}55`,
-      borderRadius:99, font:`600 ${size==='sm'?9.5:10.5}px JetBrains Mono`,
-      letterSpacing:'.04em', whiteSpace:'nowrap',
-    }}>
-      <span style={{ width:5, height:5, borderRadius:99, background:color }}/>
-      {label}
-    </span>
-  );
-}
-
-// Anime poster placeholder (gradient when no cover URL)
-function AnimePosterSmall({ coverUrl, seriesTitle }) {
-  if (coverUrl) {
-    return <img src={coverUrl} alt={seriesTitle||''} style={{ width:40, height:54, borderRadius:4, objectFit:'cover', flexShrink:0 }} />;
-  }
-  return (
-    <div style={{ width:40, height:54, borderRadius:4, flexShrink:0,
-      background:`linear-gradient(135deg, ${T.accent}33, ${T.accent2}22)`,
-      border:`1px solid ${T.border}`, display:'flex', alignItems:'center', justifyContent:'center' }}>
-      <span style={{ font:'500 16px serif', opacity:0.5 }}>🎌</span>
-    </div>
-  );
-}
-
-// ── Active download row ───────────────────────────────────────────────────────
-
-function DownloadRow({ item, last }) {
-  const isActive = item.state === 'downloading';
-  const stateColor = isActive ? T.accent : T.textDim;
-  const stateLabel = isActive ? '↓ Stahuje se' : '◷ Ve frontě';
-  // Backend returns progress as 0–100 already
-  const progress = Math.min(100, Math.round(item.progress ?? 0));
-
-  return (
-    <div style={{
-      display:'grid', gridTemplateColumns:'40px 1.6fr 90px 1.2fr 100px 80px 90px',
-      gap:12, padding:'12px 14px', alignItems:'center',
-      borderBottom: last ? 'none' : `1px solid ${T.border}`,
-    }}>
-      <AnimePosterSmall coverUrl={item.cover_url} seriesTitle={item.series_title}/>
-
-      <div style={{ minWidth:0 }}>
-        <div style={{ font:'600 12.5px JetBrains Mono', color:T.text,
-          whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-          {item.name || item.hash || '—'}
-        </div>
-        {item.series_title && (
-          <div style={{ font:'500 11px "Space Grotesk"', color:T.textDim, marginTop:2 }}>
-            {item.series_title}
-          </div>
-        )}
-      </div>
-
-      <div>
-        <StatusPill color={stateColor} label={stateLabel} size="sm"/>
-      </div>
-
-      <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
-        <div style={{ display:'flex', justifyContent:'space-between', font:'500 11px JetBrains Mono' }}>
-          <span style={{ color:T.textDim }}>
-            {item.size || item.size_h || '—'}{(item.speed || item.dlspeed_h) ? ` · ${item.speed || item.dlspeed_h}` : ''}
-          </span>
-          <span style={{ color:T.text, fontWeight:600 }}>{progress}%</span>
-        </div>
-        <div style={{ height:5, background:T.sunken, borderRadius:99, overflow:'hidden' }}>
-          <div style={{ width:`${progress}%`, height:'100%', background:stateColor, borderRadius:99 }}/>
-        </div>
-      </div>
-
-      <div style={{ font:'500 11px JetBrains Mono', color:T.textDim }}>
-        {(item.eta || item.eta_h) ? `ETA ${item.eta || item.eta_h}` : '—'}
-      </div>
-
-      <div style={{ font:'500 10px JetBrains Mono', color:T.textMute }}>
-        {item.client || 'qBittorrent'}
-      </div>
-
-      <div style={{ display:'flex', gap:4, justifyContent:'flex-end' }}>
-        <button style={{ ...btnGhost, padding:'4px 7px', fontSize:11 }}>‖</button>
-        <button style={{ ...btnGhost, padding:'4px 7px', fontSize:11 }}>✕</button>
-      </div>
-    </div>
-  );
-}
-
-// ── Recent done row ───────────────────────────────────────────────────────────
-
-function RecentRow({ item, last }) {
-  // Backend returns: file, size, date_added, subs ("jp + cs"), has_cs_sub
-  const subsLabel = item.subs && item.subs !== '—' ? item.subs : null;
-  const date = (item.date_added || item.added_at)
-    ? new Date(item.date_added || item.added_at).toLocaleDateString('cs-CZ', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
-    : '—';
-  const filename = item.file || item.filename || item.path?.split(/[/\\]/).pop() || '—';
-
-  return (
-    <div style={{
-      display:'grid', gridTemplateColumns:'40px 1.6fr 100px 130px 180px auto',
-      gap:12, padding:'10px 14px', alignItems:'center',
-      borderBottom: last ? 'none' : `1px solid ${T.border}`,
-    }}>
-      <AnimePosterSmall coverUrl={item.cover_url} seriesTitle={item.series_title}/>
-      <div style={{ minWidth:0, font:'600 12.5px JetBrains Mono', color:T.text,
-        whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{filename}</div>
-      <div style={{ font:'500 11px JetBrains Mono', color:T.textDim }}>{item.size || item.size_h || '—'}</div>
-      <div style={{ font:'500 11px JetBrains Mono', color:T.textDim }}>{date}</div>
-      <div style={{ display:'flex', gap:5, flexWrap:'wrap' }}>
-        <StatusPill color={T.statusDone} label="✓ Hotovo" size="sm"/>
-        {subsLabel && <StatusPill color={T.accent2} label={subsLabel} size="sm"/>}
-      </div>
-      <div style={{ display:'flex', gap:5, justifyContent:'flex-end' }}>
-        <button style={{ ...btnGhost, padding:'4px 8px', fontSize:11 }}>Přehrát</button>
-        <button style={{ ...btnGhost, padding:'4px 8px', fontSize:11 }}>⋯</button>
-      </div>
-    </div>
-  );
-}
-
-// ── Main page ─────────────────────────────────────────────────────────────────
-
-export default function Files() {
-  const { data: queueRaw,  isLoading: queueLoading  } = useQuery({
+export default function Files({ theme }) {
+  const { data: rawQueue } = useQuery({
     queryKey: ['downloads-queue'],
-    queryFn:  () => getDownloadsQueue().then(r => r.data),
+    queryFn: () => getDownloadsQueue().then(r => r.data ?? r),
     refetchInterval: 5000,
-    staleTime: 3000,
   });
 
-  const { data: recentRaw, isLoading: recentLoading } = useQuery({
+  const { data: rawRecent } = useQuery({
     queryKey: ['downloads-recent'],
-    queryFn:  () => getDownloadsRecent(7).then(r => r.data),
-    staleTime: 30_000,
+    queryFn: () => getDownloadsRecent(7).then(r => r.data ?? r),
   });
 
-  const { data: stats } = useQuery({
+  const { data: rawStats } = useQuery({
     queryKey: ['downloads-stats'],
-    queryFn:  () => getDownloadsStats().then(r => r.data),
-    staleTime: 10_000,
+    queryFn: () => getDownloadsStats().then(r => r.data ?? r),
   });
 
-  // Backend returns {"items":[...]} for queue and recent
-  const queue  = Array.isArray(queueRaw)  ? queueRaw  : (queueRaw?.items  ?? []);
-  const recent = Array.isArray(recentRaw) ? recentRaw : (recentRaw?.items ?? []);
+  const queue = Array.isArray(rawQueue) ? rawQueue : (rawQueue?.items || rawQueue?.queue || []);
+  const recent = Array.isArray(rawRecent) ? rawRecent : (rawRecent?.items || rawRecent?.records || []);
+  const stats = rawStats || {};
 
-  const downloading = queue.filter(q => q.state === 'downloading');
-  const queued      = queue.filter(q => q.state !== 'downloading');
-
-  const diskUsed = stats?.disk_human || '—';
-  const diskPct  = null;
+  const downloading = queue.filter(q => q.state === 'downloading' || q.state === 'seeding');
+  const inQueue = queue.filter(q => q.state === 'queued');
+  const totalSpeed = downloading.reduce((s, q) => s + (parseFloat(q.speed) || 0), 0);
+  const totalSpeedStr = totalSpeed > 0 ? `${totalSpeed.toFixed(1)} MB/s` : '—';
 
   return (
-    <div style={{ display:'flex', flexDirection:'column', gap:18 }}>
-      <PageHeader
-        title="Soubory"
+    <div style={{display:'flex',flexDirection:'column',height:'100%',overflow:'hidden'}}>
+      <PageHeader theme={T} title="Soubory"
         subtitle="Fronta stahování · knihovna na disku · karanténa"
         right={<>
-          <button style={btnSub}>‖ Pozastavit vše</button>
-          <button style={btnSub}>⟲ Obnovit klienty</button>
-          <button style={btnPrimary}>+ Přidat torrent / NZB</button>
+          <button style={btnSub(T)}>‖ Pozastavit vše</button>
+          <button style={btnSub(T)}>⟲ Obnovit klienty</button>
+          <button style={btnPrimary(T)}>+ Přidat torrent / NZB</button>
         </>}
       />
 
-      {/* Stat cards */}
-      <div style={{ display:'flex', gap:10 }}>
-        <StatCard label="Stahuje se"     value={stats?.downloading ?? downloading.length}
-          sub={downloading.length > 0 ? `${downloading.map(i=>i.speed||'').join(' · ')||'aktivní'}` : 'aktivních'}
-          accent={T.accent}/>
-        <StatCard label="Ve frontě"      value={stats?.queued ?? queued.length}
-          sub="čeká na slot"
-          accent={T.accent2}/>
-        <StatCard label="Hotovo (dnes)"  value={stats?.done_today ?? 0}
-          sub={`∑ ${recent.length} za 7 dní`}
-          accent={T.statusDone}/>
-        <StatCard label="Karanténa"      value="0"
-          sub="vše čisté"
-          accent={T.statusDone}/>
-        <StatCard label="Disk"           value={diskUsed}
-          sub="využití"
-          accent={T.accent}/>
+      <div style={{flex:1,overflowY:'auto',padding:'18px 24px',display:'flex',flexDirection:'column',gap:18}}>
+        {/* Stats */}
+        <div style={{display:'flex',gap:10}}>
+          <StatCard theme={T} label="Stahuje se" value={downloading.length} sub={`${totalSpeedStr} · ↑ —`} accent={T.accent}/>
+          <StatCard theme={T} label="Ve frontě" value={inQueue.length} sub="čeká na slot" accent={T.accent2}/>
+          <StatCard theme={T} label="Hotovo (dnes)" value={recent.filter(r => {
+            const d = r.downloaded_at || r.when || '';
+            return d.startsWith(new Date().toISOString().slice(0, 10));
+          }).length} sub={`∑ ${fmtBytes(recent.reduce((s, r) => s + (r.size_bytes || 0), 0))}`} accent={T.statusDone}/>
+          <StatCard theme={T} label="Karanténa" value={stats.quarantine_count ?? 0} sub="vše čisté" accent={T.statusDone}/>
+          <StatCard theme={T} label="Disk" value={stats.disk_used ? `${stats.disk_used} / ${stats.disk_total || '?'}` : '—'} sub={stats.disk_pct ? `${stats.disk_pct}%` : 'GB · —'} accent={T.accent}/>
+        </div>
+
+        {/* Active downloads */}
+        <Section theme={T} title="Aktivní stahování"
+          sub={`${queue.length} úloh${stats.client ? ` · klient ${stats.client}` : ''}`}>
+          <div style={{display:'flex',flexDirection:'column',background:T.panel,
+            border:`1px solid ${T.border}`,borderRadius:10,overflow:'hidden'}}>
+            {queue.length === 0 && (
+              <div style={{padding:'18px 16px',font:'500 12px "Space Grotesk"',color:T.textMute,textAlign:'center'}}>
+                Fronta je prázdná
+              </div>
+            )}
+            {queue.map((f, i) => {
+              const sm = stateStyle(f.state);
+              const progress = f.progress ?? 0;
+              return (
+                <div key={f.id || i} style={{
+                  display:'grid', gridTemplateColumns:'1.6fr 90px 1.2fr 100px 80px 90px',
+                  gap:12, padding:'12px 14px', alignItems:'center',
+                  borderBottom:i === queue.length-1 ? 'none' : `1px solid ${T.border}`,
+                }}>
+                  <div style={{minWidth:0}}>
+                    <div style={{font:'600 12.5px JetBrains Mono',color:T.text,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                      {f.title || f.name || '—'}
+                    </div>
+                    <div style={{font:'500 11px "Space Grotesk"',color:T.textDim,marginTop:2}}>
+                      {f.series_title || f.series || ''}
+                      {f.season_number ? ` · S${f.season_number}` : ''}
+                    </div>
+                  </div>
+                  <div><StatusPill theme={T} color={sm.color} label={`${sm.icon} ${sm.label}`} size="sm"/></div>
+                  <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                    <div style={{display:'flex',justifyContent:'space-between',font:'500 11px JetBrains Mono'}}>
+                      <span style={{color:T.textDim}}>
+                        {f.size || fmtBytes(f.size_bytes)}
+                        {f.speed ? ` · ${f.speed}` : ''}
+                      </span>
+                      <span style={{color:T.text,fontWeight:600}}>{progress}%</span>
+                    </div>
+                    <div style={{height:5,background:T.sunken,borderRadius:99,overflow:'hidden'}}>
+                      <div style={{width:`${progress}%`,height:'100%',background:sm.color,borderRadius:99}}/>
+                    </div>
+                  </div>
+                  <div style={{font:'500 11px JetBrains Mono',color:T.textDim}}>
+                    {f.eta ? `ETA ${f.eta}` : '—'}
+                  </div>
+                  <div style={{font:'500 10px JetBrains Mono',color:T.textMute}}>{f.client || '—'}</div>
+                  <div style={{display:'flex',gap:4,justifyContent:'flex-end'}}>
+                    <button style={{...btnGhost(T),padding:'4px 7px',fontSize:11}}>‖</button>
+                    <button style={{...btnGhost(T),padding:'4px 7px',fontSize:11}}>✕</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+
+        {/* Recently done */}
+        <Section theme={T} title="Nedávno hotové" sub="poslední 7 dní">
+          <div style={{display:'flex',flexDirection:'column',background:T.panel,
+            border:`1px solid ${T.border}`,borderRadius:10,overflow:'hidden'}}>
+            {recent.length === 0 && (
+              <div style={{padding:'18px 16px',font:'500 12px "Space Grotesk"',color:T.textMute,textAlign:'center'}}>
+                Žádné záznamy
+              </div>
+            )}
+            {recent.map((f, i) => (
+              <div key={f.id || i} style={{
+                display:'grid', gridTemplateColumns:'1.6fr 100px 130px 180px auto',
+                gap:12, padding:'10px 14px', alignItems:'center',
+                borderBottom:i === recent.length-1 ? 'none' : `1px solid ${T.border}`,
+              }}>
+                <div style={{minWidth:0,font:'600 12.5px JetBrains Mono',color:T.text,
+                  whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                  {f.title || f.name || '—'}
+                </div>
+                <div style={{font:'500 11px JetBrains Mono',color:T.textDim}}>
+                  {f.size || fmtBytes(f.size_bytes)}
+                </div>
+                <div style={{font:'500 11px JetBrains Mono',color:T.textDim}}>
+                  {f.when || (f.downloaded_at ? new Date(f.downloaded_at).toLocaleDateString('cs') : '—')}
+                </div>
+                <div style={{display:'flex',gap:5}}>
+                  <StatusPill theme={T} color={T.statusDone} label="✓ Hotovo" size="sm"/>
+                  {(f.cs_subs || f.subtitle_languages) && (
+                    <StatusPill theme={T} color={T.accent2}
+                      label={`titulky: ${f.cs_subs || f.subtitle_languages}`} size="sm"/>
+                  )}
+                </div>
+                <div style={{display:'flex',gap:5,justifyContent:'flex-end'}}>
+                  <button style={{...btnGhost(T),padding:'4px 8px',fontSize:11}}>Přehrát</button>
+                  <button style={{...btnGhost(T),padding:'4px 8px',fontSize:11}}>⋯</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
       </div>
-
-      {/* Active downloads */}
-      <Section title="Aktivní stahování" sub={`${queue.length} úloh${queue.length > 0 ? ' · klient qBittorrent' : ''}`}>
-        <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:10, overflow:'hidden' }}>
-          {queueLoading ? (
-            <div style={{ display:'flex', justifyContent:'center', padding:48 }}>
-              <Loader2 size={18} style={{ color:T.textMute }}/>
-            </div>
-          ) : queue.length === 0 ? (
-            <p style={{ textAlign:'center', padding:32, color:T.textMute, font:'500 13px "Space Grotesk"' }}>
-              Nic se nestahuje
-            </p>
-          ) : (
-            queue.map((item, i) => (
-              <DownloadRow key={item.hash || item.id || i} item={item} last={i === queue.length - 1}/>
-            ))
-          )}
-        </div>
-      </Section>
-
-      {/* Recently done */}
-      <Section title="Nedávno hotové" sub="poslední 7 dní">
-        <div style={{ background:T.panel, border:`1px solid ${T.border}`, borderRadius:10, overflow:'hidden' }}>
-          {recentLoading ? (
-            <div style={{ display:'flex', justifyContent:'center', padding:48 }}>
-              <Loader2 size={18} style={{ color:T.textMute }}/>
-            </div>
-          ) : recent.length === 0 ? (
-            <p style={{ textAlign:'center', padding:32, color:T.textMute, font:'500 13px "Space Grotesk"' }}>
-              Žádné nedávné soubory
-            </p>
-          ) : (
-            recent.map((item, i) => (
-              <RecentRow key={item.id ?? i} item={item} last={i === recent.length - 1}/>
-            ))
-          )}
-        </div>
-      </Section>
     </div>
   );
 }

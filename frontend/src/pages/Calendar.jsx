@@ -1,19 +1,21 @@
-import { useState, useMemo } from "react";
-import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { Loader2, ChevronLeft, ChevronRight, CheckCircle2, Clock } from "lucide-react";
-import api from "../api/client";
-import clsx from "clsx";
+import { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { getSeries } from '../api/client';
+import api from '../api/client';
+import {
+  THEME, btnGhost, btnSub,
+  PageHeader, StatusPill, strHue,
+} from '../v1design';
 
-const DAY_NAMES = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"];
+const T = THEME;
+
 const MONTH_NAMES = [
-  "Leden","Únor","Březen","Duben","Květen","Červen",
-  "Červenec","Srpen","Září","Říjen","Listopad","Prosinec",
+  'Leden','Únor','Březen','Duben','Květen','Červen',
+  'Červenec','Srpen','Září','Říjen','Listopad','Prosinec',
 ];
+const DAY_NAMES = ['Pondělí','Úterý','Středa','Čtvrtek','Pátek','Sobota','Neděle'];
 
-function toISO(d) {
-  return d.toISOString().slice(0, 10);
-}
+function toISO(d) { return d.toISOString().slice(0, 10); }
 
 function addMonths(d, n) {
   const r = new Date(d);
@@ -21,217 +23,158 @@ function addMonths(d, n) {
   return r;
 }
 
-export default function Calendar() {
-  const today = new Date();
-  const [month, setMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
-
-  // First/last day of visible grid (Mon–Sun, 6 weeks)
-  const gridStart = useMemo(() => {
-    const d = new Date(month);
-    const dow = (d.getDay() + 6) % 7; // Monday=0
-    d.setDate(d.getDate() - dow);
-    return d;
-  }, [month]);
-
-  const gridEnd = useMemo(() => {
-    const d = new Date(gridStart);
-    d.setDate(d.getDate() + 41); // 6 weeks
-    return d;
-  }, [gridStart]);
-
-  const { data: episodes = [], isLoading } = useQuery({
-    queryKey: ["calendar", toISO(gridStart), toISO(gridEnd)],
-    queryFn: () =>
-      api.get("/calendar", { params: { start: toISO(gridStart), end: toISO(gridEnd) } })
-        .then(r => r.data),
-    staleTime: 5 * 60_000,
-  });
-
-  // Group episodes by date
-  const byDate = useMemo(() => {
-    const map = {};
-    for (const ep of episodes) {
-      if (!ep.air_date) continue;
-      (map[ep.air_date] ??= []).push(ep);
-    }
-    return map;
-  }, [episodes]);
-
-  // Build grid cells
-  const cells = useMemo(() => {
-    const arr = [];
-    for (let i = 0; i < 42; i++) {
-      const d = new Date(gridStart);
-      d.setDate(d.getDate() + i);
-      arr.push(d);
-    }
-    return arr;
-  }, [gridStart]);
-
-  const todayISO = toISO(today);
-
-  return (
-    <div className="flex flex-col gap-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-text">Kalendář</h1>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setMonth(m => addMonths(m, -1))}
-            className="p-1.5 rounded-lg text-muted hover:text-text hover:bg-border transition-colors"
-          ><ChevronLeft size={16} /></button>
-          <span className="text-sm font-medium text-text min-w-[140px] text-center">
-            {MONTH_NAMES[month.getMonth()]} {month.getFullYear()}
-          </span>
-          <button
-            onClick={() => setMonth(m => addMonths(m, 1))}
-            className="p-1.5 rounded-lg text-muted hover:text-text hover:bg-border transition-colors"
-          ><ChevronRight size={16} /></button>
-          <button
-            onClick={() => setMonth(new Date(today.getFullYear(), today.getMonth(), 1))}
-            className="text-xs px-2.5 py-1 rounded-lg border border-border text-muted hover:border-accent hover:text-text transition-colors"
-          >Dnes</button>
-        </div>
-      </div>
-
-      {isLoading && (
-        <div className="flex items-center justify-center py-24 gap-2 text-muted">
-          <Loader2 size={18} className="animate-spin" /> Načítám…
-        </div>
-      )}
-
-      {!isLoading && (
-        <div className="bg-surface border border-border rounded-xl overflow-hidden">
-          {/* Day headers */}
-          <div className="grid grid-cols-7 border-b border-border">
-            {DAY_NAMES.map(d => (
-              <div key={d} className="py-2 text-center text-xs font-medium text-muted">
-                {d}
-              </div>
-            ))}
-          </div>
-
-          {/* Grid */}
-          <div className="grid grid-cols-7">
-            {cells.map((day, idx) => {
-              const iso     = toISO(day);
-              const isToday = iso === todayISO;
-              const isOther = day.getMonth() !== month.getMonth();
-              const eps     = byDate[iso] || [];
-
-              return (
-                <div
-                  key={idx}
-                  className={clsx(
-                    "min-h-[90px] p-1.5 border-b border-r border-border",
-                    isOther && "opacity-40",
-                    idx % 7 === 6 && "border-r-0",
-                    idx >= 35    && "border-b-0",
-                  )}
-                >
-                  {/* Day number */}
-                  <div className="flex justify-end mb-1">
-                    <span className={clsx(
-                      "text-xs w-6 h-6 flex items-center justify-center rounded-full",
-                      isToday
-                        ? "bg-accent text-white font-bold"
-                        : "text-muted"
-                    )}>
-                      {day.getDate()}
-                    </span>
-                  </div>
-
-                  {/* Episodes */}
-                  <div className="flex flex-col gap-0.5">
-                    {eps.slice(0, 4).map(ep => (
-                      <Link
-                        key={ep.id}
-                        to={`/series/${ep.series_id}`}
-                        title={`${ep.series_title} S${String(ep.season_number).padStart(2,"0")}E${String(ep.episode_number).padStart(2,"0")}${ep.title ? " — " + ep.title : ""}`}
-                        className={clsx(
-                          "flex items-center gap-1 px-1 py-0.5 rounded text-[10px] leading-tight truncate transition-colors",
-                          ep.has_file
-                            ? "bg-green-900/30 text-green-300 hover:bg-green-900/50"
-                            : "bg-blue-900/30 text-blue-300 hover:bg-blue-900/50"
-                        )}
-                      >
-                        {ep.has_file
-                          ? <CheckCircle2 size={8} className="flex-shrink-0" />
-                          : <Clock        size={8} className="flex-shrink-0" />}
-                        <span className="truncate">{ep.series_title}</span>
-                        <span className="flex-shrink-0 opacity-70">
-                          E{String(ep.episode_number).padStart(2,"0")}
-                        </span>
-                      </Link>
-                    ))}
-                    {eps.length > 4 && (
-                      <span className="text-[10px] text-muted pl-1">+{eps.length - 4} další</span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Upcoming list — next 14 days */}
-      <UpcomingList episodes={episodes} todayISO={todayISO} />
-    </div>
-  );
+function getCalData(year, month) {
+  // First day of month, last day of month + a week buffer
+  const start = new Date(year, month, 1);
+  const end = new Date(year, month + 1, 14);
+  return api.get(`/calendar?start=${toISO(start)}&end=${toISO(end)}`).then(r => r.data ?? []);
 }
 
-function UpcomingList({ episodes, todayISO }) {
-  const upcoming = episodes
-    .filter(ep => ep.air_date >= todayISO)
-    .slice(0, 20);
+export default function Calendar({ theme }) {
+  const today = new Date();
+  const [viewMonth, setViewMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
 
-  if (!upcoming.length) return null;
+  const { data: calItems = [] } = useQuery({
+    queryKey: ['calendar', viewMonth.getFullYear(), viewMonth.getMonth()],
+    queryFn: () => getCalData(viewMonth.getFullYear(), viewMonth.getMonth()),
+  });
 
-  // Group by date
-  const groups = [];
-  let lastDate = null;
-  for (const ep of upcoming) {
-    if (ep.air_date !== lastDate) {
-      groups.push({ date: ep.air_date, eps: [] });
-      lastDate = ep.air_date;
+  const { data: seriesList = [] } = useQuery({
+    queryKey: ['series'],
+    queryFn: () => getSeries().then(r => r.data),
+  });
+
+  // Build map: ISO date → [{series, episode, ...}]
+  const releaseMap = useMemo(() => {
+    const m = {};
+    for (const item of calItems) {
+      const d = (item.air_date || item.date || '').slice(0, 10);
+      if (!d) continue;
+      if (!m[d]) m[d] = [];
+      m[d].push(item);
     }
-    groups[groups.length - 1].eps.push(ep);
+    return m;
+  }, [calItems]);
+
+  // Build calendar grid (Mon-first, 6 rows)
+  const { weeks, startDay } = useMemo(() => {
+    const year = viewMonth.getFullYear();
+    const month = viewMonth.getMonth();
+    const firstDay = new Date(year, month, 1);
+    // Mon=0 … Sun=6
+    const startWeekday = (firstDay.getDay() + 6) % 7;
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < startWeekday; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+    while (cells.length % 7) cells.push(null);
+    const ws = [];
+    for (let i = 0; i < cells.length; i += 7) ws.push(cells.slice(i, i+7));
+    return { weeks: ws, startDay: startWeekday };
+  }, [viewMonth]);
+
+  const todayStr = toISO(today);
+  const monthLabel = `${MONTH_NAMES[viewMonth.getMonth()]} ${viewMonth.getFullYear()}`;
+
+  function dayISO(day) {
+    if (!day) return null;
+    return `${viewMonth.getFullYear()}-${String(viewMonth.getMonth()+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <h2 className="text-sm font-semibold text-text">Nadcházející epizody</h2>
-      {groups.map(g => (
-        <div key={g.date} className="flex gap-3 items-start">
-          <div className="w-20 flex-shrink-0 text-xs text-muted pt-2 text-right">
-            {new Date(g.date + "T12:00:00").toLocaleDateString("cs-CZ", { day: "numeric", month: "short" })}
+    <div style={{display:'flex',flexDirection:'column',height:'100%',overflow:'hidden'}}>
+      <PageHeader theme={T} title="Kalendář"
+        subtitle="Měsíční přehled premiérových epizod"
+        right={<>
+          <div style={{display:'flex',alignItems:'center',gap:6,background:T.panel2,
+            border:`1px solid ${T.border}`,borderRadius:8,padding:2}}>
+            <button onClick={() => setViewMonth(m => addMonths(m, -1))}
+              style={{...btnGhost(T),padding:'4px 8px',border:'none'}}>‹</button>
+            <div style={{font:'700 13px "Space Grotesk"',color:T.text,padding:'0 8px'}}>{monthLabel}</div>
+            <button onClick={() => setViewMonth(m => addMonths(m, 1))}
+              style={{...btnGhost(T),padding:'4px 8px',border:'none'}}>›</button>
           </div>
-          <div className="flex-1 flex flex-col gap-1">
-            {g.eps.map(ep => (
-              <Link
-                key={ep.id}
-                to={`/series/${ep.series_id}`}
-                className={clsx(
-                  "flex items-center gap-2 px-3 py-2 rounded-xl border text-xs transition-all hover:border-accent",
-                  ep.has_file
-                    ? "bg-green-900/10 border-green-800/30 text-green-300"
-                    : "bg-surface border-border text-text"
-                )}
-              >
-                {ep.series_cover && (
-                  <img src={ep.series_cover} alt="" className="w-6 h-8 rounded object-cover flex-shrink-0" />
-                )}
-                <span className="font-medium truncate flex-1">{ep.series_title}</span>
-                <span className="font-mono text-muted flex-shrink-0">
-                  S{String(ep.season_number).padStart(2,"0")}E{String(ep.episode_number).padStart(2,"0")}
-                </span>
-                {ep.has_file && <CheckCircle2 size={12} className="text-green-400 flex-shrink-0" />}
-              </Link>
+          <div style={{display:'flex',background:T.panel2,padding:2,borderRadius:8,border:`1px solid ${T.border}`}}>
+            {['Měsíc','Týden','Agenda'].map((v, i) => (
+              <button key={v} style={{
+                padding:'4px 10px',borderRadius:6,border:'none',cursor:'pointer',
+                background:i===0 ? T.panel : 'transparent',
+                color:i===0 ? T.accent : T.textDim,
+                font:'600 11px "Space Grotesk"',
+              }}>{v}</button>
             ))}
           </div>
+          <button onClick={() => setViewMonth(new Date(today.getFullYear(), today.getMonth(), 1))}
+            style={btnGhost(T)}>Dnes</button>
+        </>}
+      />
+
+      <div style={{flex:1,overflowY:'auto',padding:'18px 24px',display:'flex',flexDirection:'column',gap:8}}>
+        {/* Weekday header */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7, 1fr)',gap:6}}>
+          {DAY_NAMES.map(d => (
+            <div key={d} style={{font:'600 11px JetBrains Mono',color:T.textDim,
+              letterSpacing:'.04em',textTransform:'uppercase',padding:'0 6px'}}>{d}</div>
+          ))}
         </div>
-      ))}
+
+        {/* Calendar grid */}
+        <div style={{display:'flex',flexDirection:'column',gap:6,flex:1}}>
+          {weeks.map((week, wi) => (
+            <div key={wi} style={{display:'grid',gridTemplateColumns:'repeat(7, 1fr)',gap:6,minHeight:90}}>
+              {week.map((day, di) => {
+                const iso = dayISO(day);
+                const isToday = iso === todayStr;
+                const isWeekend = di >= 5;
+                const drops = iso ? (releaseMap[iso] || []) : [];
+                return (
+                  <div key={di} style={{
+                    background: day ? (isToday ? T.accentSoft : T.panel) : T.bg,
+                    border:`1px solid ${isToday ? T.accent : T.border}`,
+                    borderRadius:8, padding:8, display:'flex',flexDirection:'column',gap:4,
+                    opacity: day ? 1 : 0.4,
+                    minHeight:90,
+                  }}>
+                    {day && (
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
+                        <div style={{font:`${isToday?'700':'600'} 13px JetBrains Mono`,
+                          color:isToday ? T.accent : (isWeekend ? T.textDim : T.text)}}>{day}</div>
+                        {drops.length > 0 && (
+                          <div style={{font:'600 9px JetBrains Mono',color:T.textMute}}>{drops.length} ep</div>
+                        )}
+                      </div>
+                    )}
+                    {drops.slice(0, 3).map((drop, i) => {
+                      const s = seriesList.find(x => x.id === (drop.series_id || drop.seriesId)) || {};
+                      const hue = strHue(s.title_romaji || s.title || drop.series_title || '');
+                      const title = s.title_romaji || s.title || drop.series_title || '—';
+                      return (
+                        <div key={i} style={{
+                          display:'flex',alignItems:'center',gap:5,
+                          padding:'3px 5px', borderRadius:5,
+                          background:`hsla(${hue},55%,30%,0.45)`,
+                          border:`1px solid hsla(${hue},65%,50%,0.55)`,
+                        }}>
+                          <div style={{width:5,height:5,borderRadius:99,background:`hsl(${hue},70%,60%)`}}/>
+                          <div style={{font:'600 10px "Space Grotesk"',color:'#fff',
+                            whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1}}>
+                            {title}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {drops.length > 3 && (
+                      <div style={{font:'500 10px JetBrains Mono',color:T.textMute}}>
+                        + {drops.length - 3} dalších
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

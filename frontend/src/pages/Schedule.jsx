@@ -1,268 +1,259 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Play, Clock, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
-import { useState } from "react";
-import api from "../api/client";
-import clsx from "clsx";
+import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import { getSeries, getDownloadsQueue, getDownloadsRecent } from '../api/client';
+import api from '../api/client';
+import {
+  THEME, btnGhost, btnPrimary, btnSub,
+  PageHeader, StatCard, StatusPill, AnimePoster,
+  statusMeta, strHue,
+} from '../v1design';
 
-const getJobs  = () => api.get("/schedule").then(r => r.data);
-const updateJob = (job_id, body) => api.patch(`/schedule/${job_id}`, body).then(r => r.data);
-const runNow    = (job_id) => api.post(`/schedule/${job_id}/run`).then(r => r.data);
+const T = THEME;
+const getCalWeek = () => {
+  const now = new Date();
+  const start = now.toISOString().slice(0, 10);
+  const end = new Date(now.getTime() + 7 * 86400000).toISOString().slice(0, 10);
+  return api.get(`/calendar?start=${start}&end=${end}`).then(r => r.data);
+};
 
-const INTERVAL_OPTS = [
-  { value: "hourly",  label: "Každou hodinu" },
-  { value: "daily",   label: "Každý den" },
-  { value: "weekly",  label: "Každý týden" },
-  { value: "monthly", label: "Každý měsíc" },
-];
+const DAY_NAMES = ['Neděle', 'Pondělí', 'Úterý', 'Středa', 'Čtvrtek', 'Pátek', 'Sobota'];
+const SHORT_DAYS = ['Ne', 'Po', 'Út', 'St', 'Čt', 'Pá', 'So'];
+const CZ_MONTHS = ['ledna','února','března','dubna','května','června','července','srpna','září','října','listopadu','prosince'];
 
-const DOW_LABELS = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"];
-const HOUR_OPTS  = Array.from({ length: 24 }, (_, i) => i);
-
-function StatusBadge({ status }) {
-  if (!status) return null;
-  if (status === "ok") return (
-    <span className="flex items-center gap-1 text-xs text-green-400">
-      <CheckCircle2 size={12} /> OK
-    </span>
-  );
-  if (status.startsWith("error")) return (
-    <span className="flex items-center gap-1 text-xs text-red-400" title={status}>
-      <XCircle size={12} /> Chyba
-    </span>
-  );
-  return null;
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return `${SHORT_DAYS[d.getDay()]} ${d.getDate()}. ${CZ_MONTHS[d.getMonth()]}`;
 }
 
-function JobCard({ job }) {
-  const qc = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({
-    interval:     job.interval,
-    hour:         job.hour ?? 3,
-    minute:       job.minute ?? 0,
-    day_of_week:  job.day_of_week ?? 0,
-    day_of_month: job.day_of_month ?? 1,
+function stateMeta(theme, state) {
+  const m = {
+    downloading: { color:theme.accent,         label:'Stahuje se',   icon:'↓' },
+    seeding:     { color:theme.accent2,        label:'Seeduje',      icon:'↑' },
+    completed:   { color:theme.statusDone,     label:'Hotovo',       icon:'✓' },
+    ready:       { color:theme.statusDone,     label:'Připraveno',   icon:'✓' },
+    queued:      { color:theme.textDim,        label:'Ve frontě',    icon:'◷' },
+    paused:      { color:theme.statusUpcoming, label:'Pozastaveno',  icon:'‖' },
+    scheduled:   { color:theme.textDim,        label:'Plánováno',    icon:'◷' },
+    error:       { color:theme.statusEnded,    label:'Chyba',        icon:'✕' },
+  };
+  return m[state] || m.scheduled;
+}
+
+export default function Schedule({ theme }) {
+  const navigate = useNavigate();
+
+  const { data: queue = [] } = useQuery({
+    queryKey: ['downloads-queue'],
+    queryFn: () => getDownloadsQueue().then(r => r.data ?? r),
+    refetchInterval: 5000,
   });
 
-  const toggleMutation = useMutation({
-    mutationFn: () => updateJob(job.job_id, { enabled: !job.enabled }),
-    onSuccess: () => qc.invalidateQueries(["schedule"]),
+  const { data: recent = [] } = useQuery({
+    queryKey: ['downloads-recent'],
+    queryFn: () => getDownloadsRecent(7).then(r => r.data ?? r),
   });
 
-  const saveMutation = useMutation({
-    mutationFn: () => updateJob(job.job_id, form),
-    onSuccess: () => { qc.invalidateQueries(["schedule"]); setEditing(false); },
+  const { data: calItems = [] } = useQuery({
+    queryKey: ['cal-week'],
+    queryFn: getCalWeek,
   });
 
-  const runMutation = useMutation({
-    mutationFn: () => runNow(job.job_id),
-    onSuccess: () => setTimeout(() => qc.invalidateQueries(["schedule"]), 3000),
+  const { data: seriesList = [] } = useQuery({
+    queryKey: ['series'],
+    queryFn: () => getSeries().then(r => r.data),
   });
 
-  function scheduleLabel() {
-    const h = String(form.hour).padStart(2, "0");
-    const m = String(form.minute).padStart(2, "0");
-    if (form.interval === "hourly") return "každou hodinu";
-    if (form.interval === "daily")  return `denně ve ${h}:${m}`;
-    if (form.interval === "weekly") return `každý ${DOW_LABELS[form.day_of_week]} ve ${h}:${m}`;
-    if (form.interval === "monthly") return `každý měsíc ${form.day_of_month}. ve ${h}:${m}`;
-    return "";
+  // Group calendar items by date
+  const byDate = {};
+  for (const item of calItems) {
+    const d = item.air_date?.slice(0, 10) || item.date?.slice(0, 10);
+    if (!d) continue;
+    if (!byDate[d]) byDate[d] = [];
+    byDate[d].push(item);
   }
 
-  return (
-    <div className={clsx(
-      "bg-surface border rounded-xl p-4 flex flex-col gap-3 transition-colors",
-      job.enabled ? "border-border" : "border-border/40 opacity-60"
-    )}>
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-text">{job.name}</h3>
-            <StatusBadge status={job.last_status} />
-          </div>
-          <p className="text-xs text-muted mt-0.5">{job.description}</p>
-        </div>
-        {/* Toggle */}
-        <button
-          onClick={() => toggleMutation.mutate()}
-          disabled={toggleMutation.isPending}
-          className={clsx(
-            "relative w-10 h-5 rounded-full transition-colors flex-shrink-0",
-            job.enabled ? "bg-accent" : "bg-border"
-          )}
-          title={job.enabled ? "Deaktivovat" : "Aktivovat"}
-        >
-          <span className={clsx(
-            "absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform",
-            job.enabled ? "translate-x-5" : "translate-x-0.5"
-          )} />
-        </button>
-      </div>
-
-      {/* Schedule summary */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs text-muted">
-          <Clock size={11} />
-          <span>{scheduleLabel()}</span>
-        </div>
-        <div className="flex gap-2 items-center">
-          {job.last_run_at && (
-            <span className="text-xs text-muted/60">
-              naposledy: {new Date(job.last_run_at).toLocaleString("cs-CZ", { dateStyle: "short", timeStyle: "short" })}
-            </span>
-          )}
-          <button
-            onClick={() => runMutation.mutate()}
-            disabled={runMutation.isPending}
-            className="flex items-center gap-1 text-xs text-accent hover:text-accent-hover disabled:opacity-50 transition-colors"
-          >
-            {runMutation.isPending ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
-            Spustit teď
-          </button>
-          <button
-            onClick={() => setEditing(e => !e)}
-            className="text-xs text-muted hover:text-text transition-colors"
-          >
-            {editing ? "Zavřít" : "Upravit"}
-          </button>
-        </div>
-      </div>
-
-      {/* Inline editor */}
-      {editing && (
-        <div className="border-t border-border pt-3 flex flex-col gap-3">
-          {/* Interval */}
-          <div className="flex flex-wrap gap-1.5">
-            {INTERVAL_OPTS.map(o => (
-              <button
-                key={o.value}
-                onClick={() => setForm(f => ({ ...f, interval: o.value }))}
-                className={clsx(
-                  "text-xs px-2.5 py-1 rounded-full border transition-colors",
-                  form.interval === o.value
-                    ? "bg-accent border-accent text-white"
-                    : "bg-bg border-border text-muted hover:border-accent"
-                )}
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Time pickers */}
-          {form.interval !== "hourly" && (
-            <div className="flex flex-wrap gap-4 text-sm">
-              {form.interval === "weekly" && (
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-muted">Den</label>
-                  <div className="flex gap-1">
-                    {DOW_LABELS.map((d, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setForm(f => ({ ...f, day_of_week: i }))}
-                        className={clsx(
-                          "text-xs w-6 h-6 rounded transition-colors",
-                          form.day_of_week === i
-                            ? "bg-accent text-white"
-                            : "bg-bg border border-border text-muted hover:border-accent"
-                        )}
-                      >
-                        {d}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {form.interval === "monthly" && (
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-muted">Den v měsíci</label>
-                  <input
-                    type="number" min={1} max={28}
-                    value={form.day_of_month}
-                    onChange={e => setForm(f => ({ ...f, day_of_month: +e.target.value }))}
-                    className="w-16 bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
-                  />
-                </div>
-              )}
-
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted">Hodina</label>
-                <select
-                  value={form.hour}
-                  onChange={e => setForm(f => ({ ...f, hour: +e.target.value }))}
-                  className="bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
-                >
-                  {HOUR_OPTS.map(h => (
-                    <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted">Minuta</label>
-                <select
-                  value={form.minute}
-                  onChange={e => setForm(f => ({ ...f, minute: +e.target.value }))}
-                  className="bg-bg border border-border rounded px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
-                >
-                  {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map(m => (
-                    <option key={m} value={m}>{String(m).padStart(2, "0")}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            <button
-              onClick={() => saveMutation.mutate()}
-              disabled={saveMutation.isPending}
-              className="flex items-center gap-1 text-xs px-3 py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-50 text-white rounded-lg transition-colors"
-            >
-              {saveMutation.isPending ? <Loader2 size={11} className="animate-spin" /> : null}
-              Uložit
-            </button>
-            <button
-              onClick={() => setEditing(false)}
-              className="text-xs px-3 py-1.5 bg-surface border border-border hover:border-accent text-muted rounded-lg transition-colors"
-            >
-              Zrušit
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export default function Schedule() {
-  const { data: jobs, isLoading } = useQuery({
-    queryKey: ["schedule"],
-    queryFn: getJobs,
-    refetchInterval: 15_000,   // poll every 15s to update last_run
+  // Build week days
+  const today = new Date();
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    return d.toISOString().slice(0, 10);
   });
 
+  const downloading = queue.filter(q => ['downloading','seeding'].includes(q.state) || q.progress < 100);
+  const totalSpeed = downloading.reduce((s, q) => s + (parseFloat(q.speed) || 0), 0);
+
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-text">Harmonogram</h1>
-        <p className="text-xs text-muted">Automatické úlohy — časy v UTC</p>
-      </div>
+    <div style={{display:'flex',flexDirection:'column',height:'100%',overflow:'hidden'}}>
+      <PageHeader theme={T} title="Harmonogram"
+        subtitle="Sledované série · příští epizody · stav stahování"
+        right={<>
+          <button style={btnSub(T)}>⟲ Obnovit indexery</button>
+          <button style={btnSub(T)}>⚙ Pravidla</button>
+        </>}
+      />
 
-      {isLoading && (
-        <div className="flex items-center gap-2 text-muted py-12 justify-center">
-          <Loader2 size={18} className="animate-spin" /> Načítám…
+      <div style={{flex:1,overflowY:'auto',padding:'18px 24px',display:'flex',flexDirection:'column',gap:18}}>
+        {/* Stats */}
+        <div style={{display:'flex',gap:10}}>
+          <StatCard theme={T} label="Stahuje se" value={downloading.length || '0'} sub={totalSpeed > 0 ? `${totalSpeed.toFixed(1)} MB/s` : 'žádné aktivní'} accent={T.accent}/>
+          <StatCard theme={T} label="Ve frontě" value={queue.filter(q => q.state === 'queued').length} sub="čeká na slot" accent={T.accent2}/>
+          <StatCard theme={T} label="Hotovo (7 dní)" value={recent.length} sub={`${recent.reduce((s, r) => s + (r.size_bytes || 0), 0) > 0 ? (recent.reduce((s, r) => s + (r.size_bytes || 0), 0) / 1e9).toFixed(1) + ' GB' : '—'}`} accent={T.statusDone}/>
+          <StatCard theme={T} label="Vysílá se" value={seriesList.filter(s => s.status === 'RELEASING' || s.status === 'Continuing').length} sub="aktivní série" accent={T.statusAiring}/>
         </div>
-      )}
 
-      {jobs?.length === 0 && (
-        <div className="text-muted text-sm text-center py-12">Žádné naplánované úlohy.</div>
-      )}
+        {/* Active downloads */}
+        {queue.length > 0 && (
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            <div style={{display:'flex',alignItems:'baseline',gap:10}}>
+              <div style={{font:'700 16px "Space Grotesk"',color:T.text}}>Aktivní stahování</div>
+              <div style={{font:'500 12px JetBrains Mono',color:T.textMute}}>{queue.length} úloh</div>
+              <div style={{flex:1,height:1,background:T.border,marginLeft:6}}/>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',background:T.panel,
+              border:`1px solid ${T.border}`,borderRadius:10,overflow:'hidden'}}>
+              {queue.map((f, i) => {
+                const sm = stateMeta(T, f.state);
+                const progress = f.progress ?? 0;
+                return (
+                  <div key={f.id || i} style={{
+                    display:'grid', gridTemplateColumns:'1.6fr 90px 1.2fr 100px 80px 90px',
+                    gap:12, padding:'12px 14px', alignItems:'center',
+                    borderBottom:i === queue.length-1 ? 'none' : `1px solid ${T.border}`,
+                  }}>
+                    <div style={{minWidth:0}}>
+                      <div style={{font:'600 12.5px JetBrains Mono',color:T.text,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{f.title || f.name || '—'}</div>
+                      <div style={{font:'500 11px "Space Grotesk"',color:T.textDim,marginTop:2}}>
+                        {f.series_title || f.series || ''}
+                      </div>
+                    </div>
+                    <div><StatusPill theme={T} color={sm.color} label={`${sm.icon} ${sm.label}`} size="sm"/></div>
+                    <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                      <div style={{display:'flex',justifyContent:'space-between',font:'500 11px JetBrains Mono'}}>
+                        <span style={{color:T.textDim}}>{f.size || ''}{f.speed ? ` · ${f.speed}` : ''}</span>
+                        <span style={{color:T.text,fontWeight:600}}>{progress}%</span>
+                      </div>
+                      <div style={{height:5,background:T.sunken,borderRadius:99,overflow:'hidden'}}>
+                        <div style={{width:`${progress}%`,height:'100%',background:sm.color,borderRadius:99}}/>
+                      </div>
+                    </div>
+                    <div style={{font:'500 11px JetBrains Mono',color:T.textDim}}>
+                      {f.eta ? `ETA ${f.eta}` : '—'}
+                    </div>
+                    <div style={{font:'500 10px JetBrains Mono',color:T.textMute}}>{f.client || ''}</div>
+                    <div style={{display:'flex',gap:4,justifyContent:'flex-end'}}>
+                      <button style={{...btnGhost(T),padding:'4px 7px',fontSize:11}}>‖</button>
+                      <button style={{...btnGhost(T),padding:'4px 7px',fontSize:11}}>✕</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {jobs?.map(job => <JobCard key={job.job_id} job={job} />)}
+        {/* This week */}
+        {weekDays.map(dateStr => {
+          const items = byDate[dateStr] || [];
+          const d = new Date(dateStr);
+          const isToday = dateStr === today.toISOString().slice(0, 10);
+          const label = isToday ? 'Dnes' : DAY_NAMES[d.getDay()];
+
+          if (!isToday && items.length === 0) return null;
+          return (
+            <div key={dateStr} style={{display:'flex',flexDirection:'column',gap:8}}>
+              <div style={{display:'flex',alignItems:'baseline',gap:10}}>
+                <div style={{font:'700 16px "Space Grotesk"',color:T.text}}>{label}</div>
+                <div style={{font:'500 12px JetBrains Mono',color:T.textMute}}>{fmtDate(dateStr)}</div>
+                <div style={{flex:1,height:1,background:T.border,marginLeft:6}}/>
+                <div style={{font:'500 11px JetBrains Mono',color:T.textMute}}>{items.length} epizod</div>
+              </div>
+
+              {items.length === 0 ? (
+                <div style={{padding:'18px 16px',background:T.panel,border:`1px dashed ${T.border}`,
+                  borderRadius:10,font:'500 12px "Space Grotesk"',color:T.textMute,textAlign:'center'}}>
+                  Žádné epizody
+                </div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  {items.map((it, j) => {
+                    const s = seriesList.find(x => x.id === (it.series_id || it.seriesId)) || {};
+                    const hue = strHue(s.title || it.series_title || '');
+                    return (
+                      <div key={j} style={{
+                        display:'grid', gridTemplateColumns:'1fr auto auto',
+                        gap:14, alignItems:'center', padding:'12px 14px',
+                        background:T.panel, border:`1px solid ${T.border}`, borderRadius:10,
+                      }}>
+                        <div style={{minWidth:0}}>
+                          <div style={{display:'flex',alignItems:'center',gap:8}}>
+                            <div style={{font:'600 13px "Space Grotesk"',color:T.text}}>
+                              {it.series_title || s.title_romaji || s.title || '—'}
+                            </div>
+                            <div style={{font:'500 11px JetBrains Mono',color:T.accent}}>
+                              EP {String(it.episode_number || it.episodeNumber || 0).padStart(2,'0')}
+                            </div>
+                            {it.title && <div style={{font:'500 11px "Space Grotesk"',color:T.textDim}}>· {it.title}</div>}
+                          </div>
+                          {it.air_time && (
+                            <div style={{font:'500 11px JetBrains Mono',color:T.textDim,marginTop:2}}>{it.air_time}</div>
+                          )}
+                        </div>
+                        <div style={{display:'flex',gap:5}}>
+                          <button style={{...btnGhost(T),padding:'4px 8px',fontSize:11}}>Otevřít</button>
+                          <button style={{...btnGhost(T),padding:'4px 8px',fontSize:11}}>Titulky</button>
+                        </div>
+                        <button style={{...btnGhost(T),padding:'4px 7px',fontSize:14}}>⋯</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Recent downloads */}
+        {recent.length > 0 && (
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            <div style={{display:'flex',alignItems:'baseline',gap:10}}>
+              <div style={{font:'700 16px "Space Grotesk"',color:T.text}}>Nedávno hotové</div>
+              <div style={{font:'500 12px JetBrains Mono',color:T.textMute}}>posledních 7 dní</div>
+              <div style={{flex:1,height:1,background:T.border,marginLeft:6}}/>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',background:T.panel,
+              border:`1px solid ${T.border}`,borderRadius:10,overflow:'hidden'}}>
+              {recent.slice(0, 10).map((f, i) => (
+                <div key={f.id || i} style={{
+                  display:'grid', gridTemplateColumns:'1.6fr 100px 130px 180px auto',
+                  gap:12, padding:'10px 14px', alignItems:'center',
+                  borderBottom:i === Math.min(recent.length, 10)-1 ? 'none' : `1px solid ${T.border}`,
+                }}>
+                  <div style={{minWidth:0,font:'600 12.5px JetBrains Mono',color:T.text,
+                    whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                    {f.title || f.name || '—'}
+                  </div>
+                  <div style={{font:'500 11px JetBrains Mono',color:T.textDim}}>
+                    {f.size_bytes ? `${(f.size_bytes/1e9).toFixed(1)} GB` : f.size || '—'}
+                  </div>
+                  <div style={{font:'500 11px JetBrains Mono',color:T.textDim}}>{f.when || f.downloaded_at || '—'}</div>
+                  <div>
+                    <StatusPill theme={T} color={T.statusDone} label="✓ Hotovo" size="sm"/>
+                  </div>
+                  <div style={{display:'flex',gap:5,justifyContent:'flex-end'}}>
+                    <button style={{...btnGhost(T),padding:'4px 8px',fontSize:11}}>⋯</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {queue.length === 0 && calItems.length === 0 && recent.length === 0 && (
+          <div style={{padding:40,textAlign:'center',color:T.textMute,font:'500 13px "Space Grotesk"'}}>
+            Žádná aktivita tento týden
+          </div>
+        )}
       </div>
     </div>
   );
