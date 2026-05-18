@@ -1,0 +1,46 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    container_name: anisubarr-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data             # SQLite database
+      # Mount your media share here. The container path must match PATH_LOCAL_PREFIX.
+      # Unraid example: /mnt/user is where all shares live.
+      - ${UNRAID_MEDIA_PATH:-/mnt/user}:/media:rw
+    environment:
+      - DATABASE_URL=sqlite:///./data/anisubarr.db
+      - SONARR_HOST=${SONARR_HOST}
+      - SONARR_API_KEY=${SONARR_API_KEY}
+      - OLLAMA_HOST=${OLLAMA_HOST}
+      - OLLAMA_MODEL_TRANSLATE=${OLLAMA_MODEL_TRANSLATE}
+      - JWT_SECRET=${JWT_SECRET}
+      - FFMPEG_PATH=ffmpeg
+      - FFPROBE_PATH=ffprobe
+      # Path mapping — Docker: strip /data, replace with /media
+      - PATH_SONARR_PREFIX=${PATH_SONARR_PREFIX:-/data}
+      - PATH_LOCAL_PREFIX=${PATH_LOCAL_PREFIX:-/media}
+    env_file:
+      - .env
+
+  frontend:
+    image: node:20-alpine
+    container_name: anisubarr-frontend
+    working_dir: /app
+    command: sh -c "npm install && npm run build && npx serve -s dist -l 3000"
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_URL=http://backend:8000
+
+networks:
+  default:
+    name: anisubarr-net
