@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { getSeries } from '../api/client';
 import api from '../api/client';
 import {
@@ -31,6 +32,7 @@ function getCalData(year, month) {
 }
 
 export default function Calendar({ theme }) {
+  const navigate = useNavigate();
   const today = new Date();
   const [viewMonth, setViewMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
 
@@ -149,13 +151,17 @@ export default function Calendar({ theme }) {
                       const hue = strHue(s.title_romaji || s.title || drop.series_title || '');
                       const title = s.title_romaji || s.title || drop.series_title || '—';
                       return (
-                        <div key={i} style={{
+                        <div key={i} onClick={() => navigate(`/series/${s.id || drop.series_id || drop.seriesId}`)} style={{
                           display:'flex',alignItems:'center',gap:5,
                           padding:'3px 5px', borderRadius:5,
                           background:`hsla(${hue},55%,30%,0.45)`,
                           border:`1px solid hsla(${hue},65%,50%,0.55)`,
+                          cursor:'pointer',
                         }}>
-                          <div style={{width:5,height:5,borderRadius:99,background:`hsl(${hue},70%,60%)`}}/>
+                          {s.cover_url
+                            ? <img src={s.cover_url} alt={title} style={{width:18,height:25,objectFit:'cover',borderRadius:2,flexShrink:0}}/>
+                            : <div style={{width:18,height:25,borderRadius:2,background:`hsl(${hue},50%,30%)`,flexShrink:0}}/>
+                          }
                           <div style={{font:'600 10px "Space Grotesk"',color:'#fff',
                             whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1}}>
                             {title}

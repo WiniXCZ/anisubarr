@@ -249,6 +249,26 @@ def request_series(
     return result
 
 
+@router.post("/request/{request_id}/approve")
+def approve_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Approve an Overseerr request."""
+    return _post(f"/request/{request_id}/approve", {}, db)
+
+
+@router.post("/request/{request_id}/decline")
+def decline_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Decline an Overseerr request."""
+    return _post(f"/request/{request_id}/decline", {}, db)
+
+
 @router.delete("/request/{request_id}", status_code=204)
 def cancel_request(
     request_id: int,

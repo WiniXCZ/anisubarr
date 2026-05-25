@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getDownloadsQueue, getDownloadsRecent, getDownloadsStats } from '../api/client';
+import { getDownloadsQueue, getDownloadsRecent, getDownloadsStats, browseFiles } from '../api/client';
 import {
   THEME, btnGhost, btnPrimary, btnSub,
   PageHeader, StatCard, StatusPill, Section,
@@ -28,6 +29,13 @@ function stateStyle(state) {
 }
 
 export default function Files({ theme }) {
+  const [browserPath, setBrowserPath] = useState('');
+
+  const { data: fileData, isLoading: fileLoading } = useQuery({
+    queryKey: ['files-browse', browserPath],
+    queryFn: () => browseFiles(browserPath).then(r => r.data ?? r),
+  });
+
   const { data: rawQueue } = useQuery({
     queryKey: ['downloads-queue'],
     queryFn: () => getDownloadsQueue().then(r => r.data ?? r),
@@ -170,6 +178,56 @@ export default function Files({ theme }) {
                 </div>
               </div>
             ))}
+          </div>
+        </Section>
+
+        <Section theme={T} title="Prohlížeč souborů" sub={fileData?.path || 'kořenový adresář'}>
+          {fileData?.parent && (
+            <button onClick={() => setBrowserPath(fileData.parent)} style={{...btnGhost(T), marginBottom:8, fontSize:11}}>
+              ← Zpět ({fileData.parent.split(/[\\/]/).slice(-1)[0] || '/'})
+            </button>
+          )}
+          <div style={{display:'flex',flexDirection:'column',background:T.panel,
+            border:`1px solid ${T.border}`,borderRadius:10,overflow:'hidden'}}>
+            {fileLoading && (
+              <div style={{padding:'18px 16px',font:'500 12px "Space Grotesk"',color:T.textMute,textAlign:'center'}}>
+                Načítám…
+              </div>
+            )}
+            {fileData?.error && (
+              <div style={{padding:'18px 16px',font:'500 12px "Space Grotesk"',color:T.textMute,textAlign:'center'}}>
+                {fileData.error}
+              </div>
+            )}
+            {(fileData?.entries || []).map((entry, i) => {
+              const isLast = i === (fileData.entries.length - 1);
+              const icon = entry.is_dir ? '📁' : entry.kind === 'video' ? '🎬' : entry.kind === 'subtitle' ? '💬' : '📄';
+              const kindColor = entry.kind === 'video' ? T.accent : entry.kind === 'subtitle' ? T.accent2 : T.textDim;
+              return (
+                <div key={entry.path} onClick={() => entry.is_dir && setBrowserPath(entry.path)}
+                  style={{
+                    display:'grid', gridTemplateColumns:'24px 1fr 80px 130px 80px',
+                    gap:12, padding:'9px 14px', alignItems:'center',
+                    cursor: entry.is_dir ? 'pointer' : 'default',
+                    borderBottom: isLast ? 'none' : `1px solid ${T.border}`,
+                    background: 'transparent',
+                  }}>
+                  <span style={{fontSize:14}}>{icon}</span>
+                  <div style={{minWidth:0,font:'600 12px JetBrains Mono',color:T.text,
+                    whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{entry.name}</div>
+                  <div style={{font:'500 10px JetBrains Mono',color:kindColor}}>{entry.is_dir ? 'složka' : entry.kind}</div>
+                  <div style={{font:'500 10px JetBrains Mono',color:T.textDim}}>{entry.size_h || '—'}</div>
+                  <div style={{font:'500 10px JetBrains Mono',color:T.textMute}}>
+                    {entry.mtime ? new Date(entry.mtime * 1000).toLocaleDateString('cs') : ''}
+                  </div>
+                </div>
+              );
+            })}
+            {!fileLoading && !fileData?.error && (fileData?.entries || []).length === 0 && (
+              <div style={{padding:'18px 16px',font:'500 12px "Space Grotesk"',color:T.textMute,textAlign:'center'}}>
+                Prázdný adresář
+              </div>
+            )}
           </div>
         </Section>
       </div>

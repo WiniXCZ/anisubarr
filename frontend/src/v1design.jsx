@@ -28,13 +28,23 @@ export const btnSub = (t) => ({
 
 // Status mapping for API status codes
 export const STATUS_META = {
+  // AniList style
   RELEASING:        { label:'Vysílá se', colorKey:'statusAiring' },
   FINISHED:         { label:'Dokončeno',  colorKey:'statusDone' },
   NOT_YET_RELEASED: { label:'Chystá se',  colorKey:'statusUpcoming' },
   CANCELLED:        { label:'Skončilo',   colorKey:'statusEnded' },
+  HIATUS:           { label:'Pauza',      colorKey:'statusUpcoming' },
+  // Sonarr style (Title case)
   Continuing:       { label:'Vysílá se', colorKey:'statusAiring' },
   Ended:            { label:'Skončilo',   colorKey:'statusEnded' },
   Upcoming:         { label:'Chystá se',  colorKey:'statusUpcoming' },
+  Deleted:          { label:'Smazáno',   colorKey:'statusEnded' },
+  // Sonarr style (lowercase — actual API values)
+  // "ended" = series concluded (= completed/green), "deleted" = removed from Sonarr (= red)
+  continuing:       { label:'Vysílá se', colorKey:'statusAiring' },
+  ended:            { label:'Dokončeno', colorKey:'statusDone' },
+  upcoming:         { label:'Chystá se', colorKey:'statusUpcoming' },
+  deleted:          { label:'Smazáno',  colorKey:'statusEnded' },
 };
 
 export function statusMeta(status) {

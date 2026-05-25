@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Tv2 } from "lucide-react";
 import { login } from "../api/client";
+import { T } from "../theme";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -25,56 +25,68 @@ export default function Login() {
     }
   }
 
+  const inp = {
+    width: '100%', padding: '9px 12px',
+    background: T.sunken, color: T.text,
+    border: `1px solid ${T.border}`, borderRadius: 8,
+    outline: 'none', font: '500 14px "Space Grotesk"',
+  };
+
   return (
-    <div className="min-h-screen bg-bg flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="flex flex-col items-center gap-3 mb-8">
-          <div className="w-16 h-16 rounded-2xl bg-accent/20 flex items-center justify-center">
-            <Tv2 size={32} className="text-accent" />
+    <div style={{
+      minHeight: '100vh', background: T.bg,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+    }}>
+      <div style={{ width: '100%', maxWidth: 360 }}>
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <svg width={44} height={44} viewBox="0 0 24 24" fill="none"
+            stroke={T.accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            style={{ marginBottom: 12 }}>
+            <rect x="2" y="4" width="20" height="14" rx="2"/>
+            <line x1="8" y1="21" x2="16" y2="21"/>
+            <line x1="12" y1="18" x2="12" y2="21"/>
+          </svg>
+          <div style={{ font: '700 22px "Space Grotesk"', color: T.text }}>Anisubarr</div>
+          <div style={{ font: '500 13px "Space Grotesk"', color: T.textMute, marginTop: 4 }}>
+            Správa anime titulků
           </div>
-          <h1 className="text-2xl font-bold text-text">Anisubarr</h1>
-          <p className="text-sm text-muted">Správa anime titulků</p>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="bg-surface border border-border rounded-2xl p-6 flex flex-col gap-4">
+        <form onSubmit={handleSubmit} style={{
+          background: T.panel, border: `1px solid ${T.border}`,
+          borderRadius: 14, padding: 24,
+          display: 'flex', flexDirection: 'column', gap: 14,
+        }}>
           {error && (
-            <div className="bg-red-900/30 border border-red-700 text-red-300 text-sm px-3 py-2 rounded-lg">
-              {error}
-            </div>
+            <div style={{
+              background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+              color: '#fca5a5', font: '500 13px "Space Grotesk"',
+              padding: '8px 12px', borderRadius: 7,
+            }}>{error}</div>
           )}
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-text-dim">Uživatelské jméno</label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              autoFocus
-              className="bg-bg border border-border rounded-lg px-3 py-2.5 text-text placeholder-muted focus:outline-none focus:border-accent transition-colors"
-              placeholder="admin"
-            />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={{ font: '500 12px "Space Grotesk"', color: T.textDim }}>
+              Uživatelské jméno
+            </label>
+            <input type="text" value={username} onChange={e => setUsername(e.target.value)}
+              required autoFocus placeholder="admin" style={inp}/>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-text-dim">Heslo</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="bg-bg border border-border rounded-lg px-3 py-2.5 text-text placeholder-muted focus:outline-none focus:border-accent transition-colors"
-              placeholder="••••••••"
-            />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={{ font: '500 12px "Space Grotesk"', color: T.textDim }}>
+              Heslo
+            </label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+              required placeholder="••••••••" style={inp}/>
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="mt-2 bg-accent hover:bg-accent-hover disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg transition-colors"
-          >
+          <button type="submit" disabled={loading} style={{
+            marginTop: 4, padding: '10px 0',
+            background: T.accent, color: '#fff', border: 'none',
+            borderRadius: 8, font: '600 14px "Space Grotesk"', cursor: 'pointer',
+            opacity: loading ? 0.6 : 1,
+          }}>
             {loading ? "Přihlašuji…" : "Přihlásit se"}
           </button>
         </form>

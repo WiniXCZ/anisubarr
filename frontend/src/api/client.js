@@ -110,6 +110,8 @@ export const writeEpisodesNfo          = (episodeIds) => api.post("/nfo/write/ep
 export const overseerrStatus      = ()          => api.get("/overseerr/status");
 export const overseerrRequests    = (filter)    => api.get("/overseerr/requests", { params: { filter, take: 50 } });
 export const overseerrRequest     = (seriesId)  => api.post(`/overseerr/request/${seriesId}`);
+export const overseerrApprove     = (reqId)     => api.post(`/overseerr/request/${reqId}/approve`);
+export const overseerrDecline     = (reqId)     => api.post(`/overseerr/request/${reqId}/decline`);
 export const overseerrCancelReq   = (reqId)     => api.delete(`/overseerr/request/${reqId}`);
 export const overseerrIssues      = (params)    => api.get("/overseerr/issues", { params });
 export const overseerrSeriesIssues= (seriesId)  => api.get(`/overseerr/issues/series/${seriesId}`);
@@ -167,5 +169,8 @@ export const getGlossary         = (params) => api.get("/glossary", { params });
 export const createGlossaryEntry = (data)   => api.post("/glossary", data);
 export const updateGlossaryEntry = (id, data) => api.patch(`/glossary/${id}`, data);
 export const deleteGlossaryEntry = (id)     => api.delete(`/glossary/${id}`);
+
+// ── File browser ──────────────────────────
+export const browseFiles = (path = '') => api.get('/files/browse', { params: path ? { path } : {} });
 
 export default api;

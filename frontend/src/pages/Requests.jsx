@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getRequests, createRequest, updateRequest, deleteRequest,
-  overseerrRequests, overseerrStatus,
+  overseerrRequests, overseerrStatus, overseerrApprove, overseerrDecline, overseerrCancelReq,
 } from '../api/client';
 import { useToast } from '../context/ToastContext';
 import {
@@ -71,10 +71,10 @@ function NewRequestModal({ theme, onClose, onCreate }) {
 }
 
 export default function Requests({ theme }) {
-  const [tab, setTab] = useState('pending');
+  const [tab, setTab] = useState('overseerr');
   const [showModal, setShowModal] = useState(false);
   const qc = useQueryClient();
-  const { showToast } = useToast();
+  const toast = useToast();
 
   const { data: localReqs = [] } = useQuery({
     queryKey: ['requests'],
@@ -87,11 +87,16 @@ export default function Requests({ theme }) {
       .then(r => r.data?.results ?? []),
   });
 
+  const { data: overseerrStatusData } = useQuery({
+    queryKey: ['overseerr-status'],
+    queryFn: () => overseerrStatus().then(r => r.data ?? r),
+  });
+
   const createMutation = useMutation({
     mutationFn: (data) => createRequest(data),
     onSuccess: () => {
       qc.invalidateQueries(['requests']);
-      showToast('Žádost vytvořena', 'success');
+      toast.success('Žádost vytvořena');
     },
   });
 
@@ -103,6 +108,23 @@ export default function Requests({ theme }) {
   const deleteMutation = useMutation({
     mutationFn: (id) => deleteRequest(id),
     onSuccess: () => qc.invalidateQueries(['requests']),
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: (id) => overseerrApprove(id),
+    onSuccess: () => { qc.invalidateQueries(['overseerr-requests']); toast.success('Žádost schválena'); },
+    onError: () => toast.error('Chyba při schvalování'),
+  });
+
+  const declineMutation = useMutation({
+    mutationFn: (id) => overseerrDecline(id),
+    onSuccess: () => { qc.invalidateQueries(['overseerr-requests']); toast.success('Žádost zamítnuta'); },
+    onError: () => toast.error('Chyba při zamítání'),
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: (id) => overseerrCancelReq(id),
+    onSuccess: () => { qc.invalidateQueries(['overseerr-requests']); toast.success('Žádost zrušena'); },
   });
 
   // Combine local + overseerr requests
@@ -166,6 +188,12 @@ export default function Requests({ theme }) {
             </div>
           )}
 
+          {tab === 'overseerr' && overseerrStatusData?.connected === false && (
+            <div style={{padding:24,background:T.panel,border:`1px dashed ${T.border}`,borderRadius:10,textAlign:'center',color:T.textDim}}>
+              Overseerr není připojen. Nastav OVERSEERR_HOST a OVERSEERR_API_KEY v Nastavení.
+            </div>
+          )}
+
           {tab === 'overseerr' ? (
             list.map((req, idx) => {
               const title = req.media?.title || req.media?.name || req.title || '—';
@@ -173,6 +201,9 @@ export default function Requests({ theme }) {
               const status = req.status;
               const h = strHue(title);
               const coverUrl = req.media?.posterPath ? `https://image.tmdb.org/t/p/w92${req.media.posterPath}` : null;
+              const statusLabel = status === 1 ? 'Čeká' : status === 2 ? 'Schváleno' : status === 3 ? 'Zamítnuto' : status === 4 ? 'Částečně' : status === 5 ? 'Dostupné' : String(status ?? '?');
+              const statusColor = status === 1 ? T.statusUpcoming : status === 2 ? T.statusDone : status === 3 ? T.statusEnded : status >= 4 ? T.accent2 : T.textDim;
+              const isPending = status === 1;
               return (
                 <div key={req.id || idx} style={{
                   display:'grid', gridTemplateColumns:'48px 1fr auto',
@@ -191,9 +222,30 @@ export default function Requests({ theme }) {
                       od <span style={{color:T.text}}>@{user}</span>
                     </div>
                   </div>
-                  <div style={{display:'flex',gap:6,alignItems:'center'}}>
-                    <StatusPill theme={T} color={status === 1 ? T.statusUpcoming : status === 2 ? T.statusDone : T.textDim}
-                      label={status === 1 ? 'Čeká' : status === 2 ? 'Schváleno' : `${status}`} size="sm"/>
+                  <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}>
+                    <StatusPill theme={T} color={statusColor} label={statusLabel} size="sm"/>
+                    {isPending && <>
+                      <button
+                        onClick={() => declineMutation.mutate(req.id)}
+                        disabled={declineMutation.isPending}
+                        style={{...btnGhost(T),padding:'5px 10px',fontSize:11}}>
+                        ✕ Zamítnout
+                      </button>
+                      <button
+                        onClick={() => approveMutation.mutate(req.id)}
+                        disabled={approveMutation.isPending}
+                        style={{...btnPrimary(T),padding:'5px 10px',fontSize:11}}>
+                        ✓ Schválit
+                      </button>
+                    </>}
+                    {!isPending && (
+                      <button
+                        onClick={() => cancelMutation.mutate(req.id)}
+                        disabled={cancelMutation.isPending}
+                        style={{...btnGhost(T),padding:'5px 8px',fontSize:11}}>
+                        ✕
+                      </button>
+                    )}
                   </div>
                 </div>
               );

@@ -129,7 +129,7 @@ function ConnectionsSection() {
 
 function UsersSection() {
   const qc = useQueryClient();
-  const { showToast } = useToast();
+  const toast = useToast();
   const [newUser, setNewUser] = useState({ username: '', password: '', email: '' });
   const [showForm, setShowForm] = useState(false);
 
@@ -140,7 +140,7 @@ function UsersSection() {
 
   const createMutation = useMutation({
     mutationFn: (data) => createUser(data),
-    onSuccess: () => { qc.invalidateQueries(['users']); setShowForm(false); setNewUser({ username:'', password:'', email:'' }); showToast('Uživatel vytvořen', 'success'); },
+    onSuccess: () => { qc.invalidateQueries(['users']); setShowForm(false); setNewUser({ username:'', password:'', email:'' }); toast.success('Uživatel vytvořen'); },
   });
   const deleteMutation = useMutation({
     mutationFn: (id) => deleteUser(id),
@@ -188,7 +188,7 @@ function UsersSection() {
 
 function ApiKeysSection() {
   const qc = useQueryClient();
-  const { showToast } = useToast();
+  const toast = useToast();
   const [name, setName] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [newKey, setNewKey] = useState(null);

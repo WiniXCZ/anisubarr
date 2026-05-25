@@ -42,16 +42,19 @@ function stateMeta(theme, state) {
 export default function Schedule({ theme }) {
   const navigate = useNavigate();
 
-  const { data: queue = [] } = useQuery({
+  const { data: rawQueue } = useQuery({
     queryKey: ['downloads-queue'],
     queryFn: () => getDownloadsQueue().then(r => r.data ?? r),
     refetchInterval: 5000,
   });
 
-  const { data: recent = [] } = useQuery({
+  const { data: rawRecent } = useQuery({
     queryKey: ['downloads-recent'],
     queryFn: () => getDownloadsRecent(7).then(r => r.data ?? r),
   });
+
+  const queue = Array.isArray(rawQueue) ? rawQueue : (rawQueue?.items || []);
+  const recent = Array.isArray(rawRecent) ? rawRecent : (rawRecent?.items || []);
 
   const { data: calItems = [] } = useQuery({
     queryKey: ['cal-week'],
@@ -99,7 +102,7 @@ export default function Schedule({ theme }) {
           <StatCard theme={T} label="Stahuje se" value={downloading.length || '0'} sub={totalSpeed > 0 ? `${totalSpeed.toFixed(1)} MB/s` : 'žádné aktivní'} accent={T.accent}/>
           <StatCard theme={T} label="Ve frontě" value={queue.filter(q => q.state === 'queued').length} sub="čeká na slot" accent={T.accent2}/>
           <StatCard theme={T} label="Hotovo (7 dní)" value={recent.length} sub={`${recent.reduce((s, r) => s + (r.size_bytes || 0), 0) > 0 ? (recent.reduce((s, r) => s + (r.size_bytes || 0), 0) / 1e9).toFixed(1) + ' GB' : '—'}`} accent={T.statusDone}/>
-          <StatCard theme={T} label="Vysílá se" value={seriesList.filter(s => s.status === 'RELEASING' || s.status === 'Continuing').length} sub="aktivní série" accent={T.statusAiring}/>
+          <StatCard theme={T} label="Vysílá se" value={seriesList.filter(s => ['RELEASING','Continuing','continuing'].includes(s.status)).length} sub="aktivní série" accent={T.statusAiring}/>
         </div>
 
         {/* Active downloads */}
@@ -180,11 +183,18 @@ export default function Schedule({ theme }) {
                     const s = seriesList.find(x => x.id === (it.series_id || it.seriesId)) || {};
                     const hue = strHue(s.title || it.series_title || '');
                     return (
-                      <div key={j} style={{
-                        display:'grid', gridTemplateColumns:'1fr auto auto',
+                      <div key={j} onClick={() => navigate(`/series/${s.id || it.series_id || it.seriesId || ''}`)} style={{
+                        display:'grid', gridTemplateColumns:'44px 1fr auto auto',
                         gap:14, alignItems:'center', padding:'12px 14px',
                         background:T.panel, border:`1px solid ${T.border}`, borderRadius:10,
+                        cursor:'pointer',
                       }}>
+                        <div style={{width:40,height:56,borderRadius:4,overflow:'hidden',flexShrink:0,border:`1px solid ${T.border}`}}>
+                          {s.cover_url
+                            ? <img src={s.cover_url} alt={s.title_romaji || s.title || ''} style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+                            : <div style={{width:'100%',height:'100%',background:`linear-gradient(160deg, hsl(${strHue(s.title_romaji || s.title || it.series_title || '')},55%,30%), hsl(${(strHue(s.title_romaji || s.title || it.series_title || '')+60)%360},50%,18%))`}}/>
+                          }
+                        </div>
                         <div style={{minWidth:0}}>
                           <div style={{display:'flex',alignItems:'center',gap:8}}>
                             <div style={{font:'600 13px "Space Grotesk"',color:T.text}}>
