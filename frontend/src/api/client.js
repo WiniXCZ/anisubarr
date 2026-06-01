@@ -12,11 +12,12 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Redirect to login on 401
+// Redirect to login on 401 — but NOT for the login endpoint itself
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    const isLoginEndpoint = err.config?.url?.includes("/auth/token");
+    if (err.response?.status === 401 && !isLoginEndpoint) {
       localStorage.removeItem("token");
       window.location.href = "/login";
     }
@@ -140,6 +141,11 @@ export const embyStatus    = ()           => api.get("/emby/status");
 // ── Paths (SMB test) ──────────────────────
 export const smbTest       = ()           => api.get("/paths/smb-test");
 export const sonarrHealth  = ()           => api.get("/sync/sonarr/health");
+
+// ── App settings ──────────────────────────
+export const getAppSettings    = ()       => api.get("/settings");
+export const updateSettings    = (data)   => api.put("/settings", data);
+export const testConnection    = (svc, body) => api.post(`/settings/test/${svc}`, body);
 
 // ── Library stats ─────────────────────────
 export const getLibraryStats    = ()    => api.get("/library/stats");

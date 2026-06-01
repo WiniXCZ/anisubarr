@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getUsers, createUser, deleteUser, getApiKeys, createApiKey, deleteApiKey,
-  overseerrStatus, embyStatus, sonarrHealth, smbTest,
+  getAppSettings, updateSettings, testConnection,
 } from '../api/client';
 import api from '../api/client';
 import { useToast } from '../context/ToastContext';
@@ -14,14 +14,15 @@ import {
 const T = THEME;
 
 const SECTIONS = [
-  { id:'profile',   label:'Profil',         icon:'👤' },
-  { id:'library',   label:'Knihovna',       icon:'⊞' },
-  { id:'downloads', label:'Stahovače',      icon:'↓' },
-  { id:'indexers',  label:'Indexery',       icon:'⌕' },
-  { id:'subs',      label:'Titulky & AI',   icon:'✦' },
-  { id:'users',     label:'Uživatelé',      icon:'⊕' },
-  { id:'apikeys',   label:'API klíče',      icon:'⌧' },
-  { id:'about',     label:'O aplikaci',     icon:'ⓘ' },
+  { id:'profile',     label:'Profil',         icon:'👤' },
+  { id:'library',     label:'Knihovna',       icon:'⊞' },
+  { id:'connections', label:'Připojení',      icon:'⚡' },
+  { id:'downloads',   label:'Stahovače',      icon:'↓' },
+  { id:'indexers',    label:'Indexery',       icon:'⌕' },
+  { id:'subs',        label:'Titulky & AI',   icon:'✦' },
+  { id:'users',       label:'Uživatelé',      icon:'⊕' },
+  { id:'apikeys',     label:'API klíče',      icon:'⌧' },
+  { id:'about',       label:'O aplikaci',     icon:'ⓘ' },
 ];
 
 function SubsAISection() {
@@ -95,35 +96,123 @@ function LibrarySection() {
   );
 }
 
-function ConnectionsSection() {
-  const { data: sonarr } = useQuery({
-    queryKey: ['sonarr-health'],
-    queryFn: () => sonarrHealth().then(r => r.data),
-  });
-  const { data: overseerr } = useQuery({
-    queryKey: ['overseerr-status'],
-    queryFn: () => overseerrStatus().then(r => r.data),
-  });
-  const { data: emby } = useQuery({
-    queryKey: ['emby-status'],
-    queryFn: () => embyStatus().then(r => r.data),
-  });
+function ServiceBlock({ title, hostKey, keyKey, extraFields, fields, setFields, onTest, testResult, saving }) {
+  const statusColor = testResult === null ? T.textMute
+    : testResult?.connected ? T.statusDone : T.statusEnded;
+  const statusLabel = testResult === null ? '—'
+    : testResult?.connected
+      ? `✓ OK${testResult.version ? ' · v' + testResult.version : ''}`
+      : `✕ ${testResult?.reason || 'Chyba'}`;
 
   return (
-    <SettingsGroup theme={T} title="Připojení" sub="Stav externích služeb">
-      <SettingsRow theme={T} label="Sonarr"
-        control={<StatusPill theme={T}
-          color={sonarr?.ok ? T.statusDone : T.statusEnded}
-          label={sonarr?.ok ? 'Připojeno' : 'Nepřipojeno'} size="sm"/>}/>
-      <SettingsRow theme={T} label="Overseerr"
-        control={<StatusPill theme={T}
-          color={overseerr?.status === 'ok' ? T.statusDone : T.statusEnded}
-          label={overseerr?.status === 'ok' ? 'Připojeno' : 'Nepřipojeno'} size="sm"/>}/>
-      <SettingsRow theme={T} label="Emby"
-        control={<StatusPill theme={T}
-          color={emby?.ok ? T.statusDone : T.textMute}
-          label={emby?.ok ? 'Připojeno' : 'Nepřipojeno'} size="sm"/>} last/>
+    <SettingsGroup theme={T} title={title} sub={
+      <span style={{display:'flex',alignItems:'center',gap:8}}>
+        <StatusPill theme={T} color={statusColor} label={statusLabel} size="sm"/>
+      </span>
+    }>
+      <SettingsRow theme={T} label="Host"
+        control={<TextField theme={T} value={fields[hostKey] || ''} width={280} mono
+          placeholder="http://192.168.1.x:port"
+          onChange={v => setFields(p => ({...p, [hostKey]: v}))}/>}/>
+      <SettingsRow theme={T} label="API klíč"
+        control={<TextField theme={T} value={fields[keyKey] || ''} width={280} mono
+          placeholder="••••••••"
+          onChange={v => setFields(p => ({...p, [keyKey]: v}))}/>}/>
+      {(extraFields || []).map(({key, label, placeholder}) => (
+        <SettingsRow key={key} theme={T} label={label}
+          control={<TextField theme={T} value={fields[key] || ''} width={280} mono
+            placeholder={placeholder || ''}
+            onChange={v => setFields(p => ({...p, [key]: v}))}/>}/>
+      ))}
+      <SettingsRow theme={T} last label=" "
+        control={
+          <button onClick={onTest} disabled={saving}
+            style={{...btnSub(T), fontSize:11, padding:'5px 12px'}}>
+            ⚡ Otestovat
+          </button>
+        }/>
     </SettingsGroup>
+  );
+}
+
+function ConnectionsSection() {
+  const qc = useQueryClient();
+  const toast = useToast();
+
+  const { data: cfg = {} } = useQuery({
+    queryKey: ['app-settings'],
+    queryFn: () => getAppSettings().then(r => r.data ?? r),
+  });
+
+  const [fields, setFields] = useState({});
+  const [testResults, setTestResults] = useState({ sonarr: null, overseerr: null, emby: null });
+  const [testing, setTesting] = useState({});
+
+  // Merge cfg into fields on load (only for keys not yet edited)
+  const f = { ...cfg, ...fields };
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      // Only send keys that have been edited (fields state) and are non-masked
+      const payload = {};
+      for (const [k, v] of Object.entries(fields)) {
+        if (v && !v.startsWith('••••')) payload[k] = v;
+        else if (v === '') payload[k] = '';
+      }
+      return updateSettings(payload);
+    },
+    onSuccess: () => {
+      toast.success('Nastavení uloženo — restart backendu pro hostové změny');
+      qc.invalidateQueries(['app-settings']);
+      setFields({});
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || 'Chyba při ukládání'),
+  });
+
+  async function handleTest(svc, body) {
+    setTesting(p => ({...p, [svc]: true}));
+    try {
+      const r = await testConnection(svc, body);
+      setTestResults(p => ({...p, [svc]: r.data ?? r}));
+    } catch {
+      setTestResults(p => ({...p, [svc]: { connected: false, reason: 'Chyba požadavku' }}));
+    } finally {
+      setTesting(p => ({...p, [svc]: false}));
+    }
+  }
+
+  const dirty = Object.keys(fields).length > 0;
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:18}}>
+      <ServiceBlock
+        title="Sonarr" hostKey="sonarr_host" keyKey="sonarr_api_key"
+        fields={f} setFields={setFields}
+        testResult={testResults.sonarr} saving={testing.sonarr}
+        onTest={() => handleTest('sonarr', { host: f.sonarr_host, api_key: f.sonarr_api_key?.startsWith('••••') ? undefined : f.sonarr_api_key })}
+      />
+      <ServiceBlock
+        title="Overseerr / Jellyseerr" hostKey="overseerr_host" keyKey="overseerr_api_key"
+        fields={f} setFields={setFields}
+        testResult={testResults.overseerr} saving={testing.overseerr}
+        onTest={() => handleTest('overseerr', { host: f.overseerr_host, api_key: f.overseerr_api_key?.startsWith('••••') ? undefined : f.overseerr_api_key })}
+      />
+      <ServiceBlock
+        title="Emby / Jellyfin" hostKey="emby_host" keyKey="emby_api_key"
+        extraFields={[{ key:'emby_external_url', label:'Ext. URL', placeholder:'https://emby.example.com' }]}
+        fields={f} setFields={setFields}
+        testResult={testResults.emby} saving={testing.emby}
+        onTest={() => handleTest('emby', { host: f.emby_host, api_key: f.emby_api_key?.startsWith('••••') ? undefined : f.emby_api_key })}
+      />
+      {dirty && (
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <button onClick={() => setFields({})} style={btnGhost(T)}>Zahodit změny</button>
+          <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} style={btnPrimary(T)}>
+            {saveMutation.isPending ? 'Ukládám…' : '✓ Uložit'}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -250,6 +339,50 @@ function ApiKeysSection() {
   );
 }
 
+export default function Settings() {
+  const [sec, setSec] = useState('profile');
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',height:'100%',background:T.bg,color:T.text}}>
+      <PageHeader theme={T} title="Nastavení" sub="Konfigurace aplikace"/>
+      <div style={{display:'flex',flex:1,overflow:'hidden'}}>
+        {/* Sidebar */}
+        <div style={{width:180,flexShrink:0,borderRight:`1px solid ${T.border}`,padding:'8px 0',overflowY:'auto'}}>
+          {SECTIONS.map(s => (
+            <button key={s.id} onClick={() => setSec(s.id)}
+              style={{display:'flex',alignItems:'center',gap:8,width:'100%',padding:'9px 16px',
+                background: sec===s.id ? T.accentSoft : 'transparent',
+                color: sec===s.id ? T.accent : T.textMute,
+                border:'none',cursor:'pointer',fontSize:13,fontFamily:'"Space Grotesk"',fontWeight:500,
+                borderLeft: sec===s.id ? `3px solid ${T.accent}` : '3px solid transparent',
+                textAlign:'left'}}>
+              <span style={{fontSize:15}}>{s.icon}</span> {s.label}
+            </button>
+          ))}
+        </div>
+        {/* Content */}
+        <div style={{flex:1,overflowY:'auto',padding:'24px 28px'}}>
+          {sec === 'profile'     && <ProfileSection/>}
+          {sec === 'library'     && <LibrarySection/>}
+          {sec === 'connections' && <ConnectionsSection/>}
+          {sec === 'subs'        && <SubsAISection/>}
+          {sec === 'users'       && <UsersSection/>}
+          {sec === 'apikeys'     && <ApiKeysSection/>}
+          {sec === 'downloads'   && (
+            <div style={{color:T.textMute,fontSize:13,padding:8}}>Sekce stahování — připravuje se</div>
+          )}
+          {sec === 'indexers'    && (
+            <div style={{color:T.textMute,fontSize:13,padding:8}}>Sekce indexerů — připravuje se</div>
+          )}
+          {sec === 'about'       && (
+            <div style={{color:T.textMute,fontSize:13,padding:8}}>Anisubarr — anime subtitle manager</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AboutSection() {
   return (
     <div style={{display:'flex',flexDirection:'column',gap:18}}>
@@ -283,51 +416,4 @@ function AboutSection() {
   );
 }
 
-export default function Settings({ theme }) {
-  const [sec, setSec] = useState('subs');
-
-  return (
-    <div style={{display:'flex',flexDirection:'column',height:'100%',overflow:'hidden'}}>
-      <PageHeader theme={T} title="Nastavení"
-        subtitle="Konfigurace appky, indexerů, klientů a AI překladu"
-        right={<button style={btnPrimary(T)}>✓ Uložit změny</button>}
-      />
-
-      <div style={{flex:1,display:'flex',minHeight:0}}>
-        {/* Sidebar */}
-        <div style={{flex:'0 0 240px',borderRight:`1px solid ${T.border}`,
-          background:T.panel2,padding:'14px 8px',display:'flex',flexDirection:'column',gap:2}}>
-          {SECTIONS.map(s => (
-            <button key={s.id} onClick={() => setSec(s.id)} style={{
-              display:'flex',alignItems:'center',gap:10,
-              padding:'9px 12px',borderRadius:7,border:'none',cursor:'pointer',
-              background:sec===s.id ? T.accentSoft : 'transparent',
-              color:sec===s.id ? T.accent : T.text,
-              font:`${sec===s.id?'600':'500'} 13px "Space Grotesk"`, textAlign:'left',
-            }}>
-              <span style={{width:16,textAlign:'center'}}>{s.icon}</span>{s.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Body */}
-        <div style={{flex:1,overflowY:'auto',padding:'22px 28px',display:'flex',flexDirection:'column',gap:22,maxWidth:900}}>
-          {sec === 'subs'      && <SubsAISection/>}
-          {sec === 'profile'   && <ProfileSection/>}
-          {sec === 'library'   && <LibrarySection/>}
-          {sec === 'downloads' && <ConnectionsSection/>}
-          {sec === 'indexers'  && (
-            <SettingsGroup theme={T} title="Indexery" sub="Zdroje pro vyhledávání nových epizod">
-              <SettingsRow theme={T} label="NyaaSi"      sub="anime · veřejný"   control={<StatusPill theme={T} color={T.statusDone} label="OK" size="sm"/>}/>
-              <SettingsRow theme={T} label="AnimeTosho"  sub="re-encode archív" control={<StatusPill theme={T} color={T.statusDone} label="OK" size="sm"/>}/>
-              <SettingsRow theme={T} label="+ Přidat indexer" control={<button style={btnSub(T)}>Konfigurovat</button>} last/>
-            </SettingsGroup>
-          )}
-          {sec === 'users'   && <UsersSection/>}
-          {sec === 'apikeys' && <ApiKeysSection/>}
-          {sec === 'about'   && <AboutSection/>}
-        </div>
-      </div>
-    </div>
-  );
-}
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               

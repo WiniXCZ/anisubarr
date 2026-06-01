@@ -32,7 +32,7 @@ export default function App() {
                 display: 'flex',
                 flexDirection: 'column',
                 width: '100vw',
-                height: '100vh',
+                height: '100dvh',
                 background: T.bg,
                 color: T.text,
                 overflow: 'hidden',
