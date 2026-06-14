@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
@@ -9,6 +10,7 @@ from ..deps import get_current_user, require_admin
 from ..models.series import Series, Episode, Subtitle
 from ..models.user import User
 from ..services import path_resolver
+from ..utils import CS_LANGS, CS_NAMES, has_cs_sub
 
 log = logging.getLogger("anisubarr.series")
 
@@ -25,6 +27,120 @@ def list_series(response: Response, db: Session = Depends(get_db), _: User = Dep
     response.headers["Cache-Control"] = "no-cache"
     rows = db.query(Series).order_by(Series.title).all()
     return [_series_card(s) for s in rows]
+
+
+@router.get("/orphaned-folders")
+def orphaned_folders(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """
+    List subfolders inside the anime_series root folder that have no matching
+    Series record in the database (by path basename comparison).
+    """
+    import os as _os
+    from ..services.promotion import _find_root_folder
+    from ..services import path_resolver as _pr
+
+    target_folder = (
+        _find_root_folder("anime_series")
+        or _find_root_folder("anime series")
+        or _find_root_folder("animeseries")
+    )
+    if not target_folder:
+        return {"error": "anime_series root folder not found in Sonarr", "folders": [], "root_folder": None}
+
+    # Try to get a locally accessible path (UNC → drive letter on Windows)
+    try:
+        local_folder = _pr.unc_to_local(target_folder)
+    except Exception:
+        local_folder = target_folder
+
+    # List subdirectories
+    try:
+        subdirs = sorted(
+            d for d in _os.listdir(local_folder)
+            if _os.path.isdir(_os.path.join(local_folder, d))
+        )
+    except Exception as exc:
+        return {
+            "error": f"Cannot list folder '{local_folder}': {exc}",
+            "root_folder": target_folder,
+            "folders": [],
+        }
+
+    # Collect all Series path basenames from DB (across ALL series, published or not)
+    all_series = db.query(Series).all()
+    db_folder_names: set[str] = set()
+    for s in all_series:
+        if s.path:
+            norm = s.path.replace("\\", "/").rstrip("/")
+            db_folder_names.add(norm.split("/")[-1])
+
+    orphaned = [d for d in subdirs if d not in db_folder_names]
+    return {
+        "root_folder": target_folder,
+        "total_folders": len(subdirs),
+        "orphaned_count": len(orphaned),
+        "folders": orphaned,
+    }
+
+
+@router.get("/{series_id}/demotion-check")
+def demotion_check(series_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    """
+    Diagnose why a series would or would not be demoted.
+    Returns verdict, reason, per-episode CS subtitle status, and active thresholds.
+    """
+    s = (
+        db.query(Series)
+        .options(subqueryload(Series.episodes).subqueryload(Episode.subtitles))
+        .filter(Series.id == series_id)
+        .first()
+    )
+    if not s:
+        raise HTTPException(404, "Series not found")
+
+    from ..services.promotion import _should_demote
+    from ..utils.settings_helper import read_setting as _rs
+
+    dir_cache: dict[str, set[str]] = {}
+    verdict, reason = _should_demote(s, db, dir_cache=dir_cache)
+
+    eps_with_file = sorted(
+        [ep for ep in s.episodes if ep.season_number > 0 and ep.has_file],
+        key=lambda ep: (ep.season_number, ep.episode_number),
+    )
+    eps_info = [
+        {
+            "id":               ep.id,
+            "code":             f"S{ep.season_number:02d}E{ep.episode_number:02d}",
+            "title":            ep.title,
+            "has_cs_sub":       has_cs_sub(ep, dir_cache),
+            "subtitles_db":     [{"lang": sub.language, "path": sub.path} for sub in ep.subtitles],
+            "subtitles_in_file": ep.subtitles_in_file,
+        }
+        for ep in eps_with_file
+    ]
+    missing_count = sum(1 for e in eps_info if not e["has_cs_sub"])
+
+    return {
+        "series_id":           s.id,
+        "title":               s.title,
+        "status":              s.status,
+        "promoted":            bool(s.promoted),
+        "has_issue":           bool(s.has_issue),
+        "verdict":             verdict,
+        "reason":              reason,
+        "episodes_with_file":  len(eps_with_file),
+        "episodes_missing_cs": missing_count,
+        "pct_missing":         round(missing_count / len(eps_with_file) * 100, 1) if eps_with_file else 0,
+        "thresholds": {
+            "pct_threshold":       int(_rs("demote_pct_threshold",             db) or "10"),
+            "multi_threshold":     int(_rs("demote_multi_episode_threshold",   db) or "2"),
+            "completed_threshold": int(_rs("demote_completed_threshold",       db) or "2"),
+            "allow_last_missing":  _rs("demote_allow_last_episode_missing",    db) != "false",
+            "single_action":       _rs("demote_single_episode_action",         db) or "flag_only",
+        },
+        "episodes": eps_info,
+    }
 
 
 @router.get("/{series_id}")
@@ -53,14 +169,18 @@ def refresh_counts(
 
 @router.get("/{series_id}/episodes")
 def get_episodes(series_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    s = db.query(Series).filter(Series.id == series_id).first()
+    s = (
+        db.query(Series)
+        .options(subqueryload(Series.episodes).subqueryload(Episode.subtitles))
+        .filter(Series.id == series_id)
+        .first()
+    )
     if not s:
         raise HTTPException(404, "Series not found")
     dir_cache: dict[str, set[str]] = {}
     return [
         _episode_out(ep, dir_cache)
         for ep in sorted(s.episodes, key=lambda e: (e.season_number, e.episode_number))
-        if ep.season_number > 0
     ]
 
 
@@ -116,95 +236,90 @@ def translate_overview(
     return {"status": "translation queued"}
 
 
+@router.post("/{series_id}/fetch-english-title")
+def fetch_english_title(
+    series_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Fetch English title and synopsis from AniList API and save to series.title_english."""
+    s = db.query(Series).filter(Series.id == series_id).first()
+    if not s:
+        raise HTTPException(404, "Series not found")
+    from ..services.anilist import fetch_english_title as anilist_fetch
+    result = anilist_fetch(s.title, year=s.year)
+    if result is None:
+        raise HTTPException(404, "AniList: série nenalezena nebo API selhal")
+    if result.get("title_english"):
+        s.title_english = result["title_english"]
+        db.commit()
+    return {
+        "title_en":      result.get("title_english"),
+        "title_romaji":  result.get("title_romaji"),
+        "synopsis_en":   result.get("synopsis"),
+    }
+
+
+@router.post("/{series_id}/fetch-tmdb")
+def fetch_tmdb(
+    series_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Fetch poster + metadata from TMDb and save to series."""
+    from ..services import tmdb as tmdb_svc
+    s = db.get(Series, series_id)
+    if not s:
+        raise HTTPException(404, "Series not found")
+    info = tmdb_svc.fetch_anime_info(s.title, year=getattr(s, "year", None))
+    if not info:
+        raise HTTPException(404, "TMDb: série nenalezena nebo API klíč chybí")
+    for k in ("tmdb_id", "poster_url", "backdrop_url"):
+        if info.get(k) is not None:
+            setattr(s, k, info[k])
+    db.commit()
+    db.refresh(s)
+    return info
+
+
+@router.post("/{series_id}/translate-description")
+def translate_description(
+    series_id: int,
+    force: bool = False,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Synchronously translate series description to Czech via AI provider.
+
+    If force=true, clears existing overview_cs and re-translates.
+    Returns {overview_cs: "..."} on success.
+    """
+    s = db.query(Series).filter(Series.id == series_id).first()
+    if not s:
+        raise HTTPException(404, "Series not found")
+
+    if force and s.overview_cs:
+        s.overview_cs = None
+        db.commit()
+        db.refresh(s)
+
+    from ..services.ai_description import ensure_czech_description
+    result = ensure_czech_description(s, db)
+    if result is None:
+        raise HTTPException(400, "Překlad se nezdařil — není popis nebo AI provider není nakonfigurován")
+
+    return {"overview_cs": result}
+
+
 # ──────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────
 
-_CS_LANGS = {"cs", "cze", "cz", "ces"}
-# Sonarr sometimes reports the full language name or mixed-case variants
-_CS_NAMES  = _CS_LANGS | {"czech", "cestina", "češtiny", "čeština"}
-_SUB_EXTS  = {".srt", ".ass", ".ssa", ".vtt", ".sub"}
-
-
-def _file_non_empty(path: str) -> bool:
-    """Return True if path exists on disk and has at least 10 bytes of content."""
-    try:
-        if not os.path.isfile(path):
-            return False
-        return os.path.getsize(path) >= 10
-    except PermissionError:
-        return True   # file exists but we can't read it — trust it
-    except Exception:
-        return False
-
-
-def _has_cs_sub(ep: Episode, dir_cache: dict[str, set[str]] | None = None) -> bool:
-    """Return True if the episode has a Czech subtitle — checks DB, embedded tracks, then disk.
-
-    dir_cache: shared per-request cache mapping directory path → set of lowercase filenames.
-    Pass the same dict across all episodes in one request to avoid redundant os.listdir() calls.
-    """
-    # 1) DB records — trust them. If a Subtitle row exists with CS language, the file is
-    #    assumed present. DB records are removed when subtitles are deleted through the app.
-    #    We intentionally skip file-existence checks here to avoid false negatives on
-    #    network/mapped drives that may not be accessible from the backend service context.
-    for sub in ep.subtitles:
-        if sub.language in _CS_LANGS:
-            return True
-
-    # 2) Embedded subtitle tracks reported by Sonarr mediaInfo (subtitles_in_file field)
-    #    Sonarr v3+ stores ISO 639-2 codes: "cze / eng" or "ces" or full names like "Czech"
-    if ep.subtitles_in_file:
-        for token in ep.subtitles_in_file.replace("/", ",").split(","):
-            if token.strip().lower() in _CS_NAMES:
-                return True
-
-    # 3) Disk — look for Show.S01E01.cs.srt style files next to the video
-    if not ep.file_path:
-        return False
-    try:
-        unc_video   = path_resolver.resolve(ep.file_path)
-        local_video = path_resolver.unc_to_local(unc_video)   # Y:\... when available
-
-        # Build list of directories to try: drive-letter first (faster), then UNC fallback
-        directories: list[str] = []
-        for vid in ([local_video] if local_video != unc_video else []) + [unc_video]:
-            d = os.path.dirname(vid)
-            if d and d not in directories:
-                directories.append(d)
-
-        video_stem = os.path.splitext(os.path.basename(local_video))[0].lower()
-
-        # Use provided cache or create a throwaway local one
-        cache = dir_cache if dir_cache is not None else {}
-
-        for directory in directories:
-            if directory not in cache:
-                try:
-                    if os.path.isdir(directory):
-                        cache[directory] = {f.lower() for f in os.listdir(directory)}
-                    else:
-                        cache[directory] = set()
-                except Exception:
-                    cache[directory] = set()
-
-            filenames = cache[directory]
-            for lang in _CS_LANGS:
-                for ext in ("srt", "ass", "ssa", "vtt"):
-                    candidate = f"{video_stem}.{lang}.{ext}"
-                    if candidate in filenames:
-                        full_path = os.path.join(directory, candidate)
-                        if _file_non_empty(full_path):
-                            return True
-    except Exception:
-        pass
-    return False
 
 
 def _parse_json_list(v) -> list:
     if not v:
         return []
-    import json
     try:
         parsed = json.loads(v)
         return parsed if isinstance(parsed, list) else []
@@ -242,7 +357,7 @@ def _series_card(s: Series, dir_cache: dict[str, set[str]] | None = None) -> dic
         cs_sub_count = sum(
             1 for ep in s.episodes
             if ep.season_number > 0 and ep.has_file and ep.monitored
-            and _has_cs_sub(ep, dir_cache)
+            and has_cs_sub(ep, dir_cache)
         )
         ep_with_file = sum(
             1 for ep in s.episodes
@@ -282,6 +397,8 @@ def _series_card(s: Series, dir_cache: dict[str, set[str]] | None = None) -> dic
         "path":              s.path,
         "has_issue":         bool(s.has_issue),
         "promoted":          bool(s.promoted),
+        "audit_status":      s.audit_status,
+        "audit_status_reason": s.audit_status_reason,
     }
 
 
@@ -291,7 +408,7 @@ def _series_detail(s: Series) -> dict:
         **_series_card(s, dir_cache={}),
         "sort_title":        s.sort_title,
         "alternate_titles":  _parse_json_list(s.alternate_titles),
-        "imdb_id":           s.imdb_id,
+             "imdb_id":           s.imdb_id,
         "tvdb_id":           s.tvdb_id,
         "tvmaze_id":         s.tvmaze_id,
         "first_aired":       s.first_aired,
@@ -301,6 +418,8 @@ def _series_detail(s: Series) -> dict:
         "overview":          s.overview_cs or s.overview,
         "overview_orig":     s.overview,
         "overview_cs":       s.overview_cs,
+        "tmdb_id":           getattr(s, "tmdb_id", None),
+        "backdrop_url":      getattr(s, "backdrop_url", None),
         "fanart_url":        s.fanart_url,
         "banner_url":        s.banner_url,
         "tags":              _parse_json_list(s.tags),
@@ -313,6 +432,8 @@ def _series_detail(s: Series) -> dict:
         "size_on_disk_human":_human_size(s.size_on_disk),
         "rating_votes":      s.rating_votes,
         "synced_at":         s.synced_at.isoformat() if s.synced_at else None,
+        "audit_status_since":   s.audit_status_since.isoformat() if s.audit_status_since else None,
+        "last_hiyori_check_at": s.last_hiyori_check_at.isoformat() if s.last_hiyori_check_at else None,
     }
 
 
@@ -331,10 +452,8 @@ def _episode_out(ep: Episode, dir_cache: dict[str, set[str]] | None = None) -> d
         "file_path":            ep.file_path,
         "file_size":            ep.file_size,
         "file_size_human":      _human_size(ep.file_size),
-        # Quality
         "quality_name":         ep.quality_name,
         "quality_resolution":   ep.quality_resolution,
-        # Media info
         "resolution":           ep.resolution,
         "video_codec":          ep.video_codec,
         "video_fps":            ep.video_fps,
@@ -345,18 +464,13 @@ def _episode_out(ep: Episode, dir_cache: dict[str, set[str]] | None = None) -> d
         "subtitles_in_file":    ep.subtitles_in_file,
         "run_time":             ep.run_time,
         "release_group":        ep.release_group,
-        # CZ subtitle flag — DB + disk fallback
-        "has_cs_sub":           _has_cs_sub(ep, dir_cache),
+        "has_cs_sub":           has_cs_sub(ep, dir_cache),
         "watched":              ep.watched or False,
     }
 
 
 def refresh_series_counts(db, series: Series, use_disk: bool = True) -> None:
-    """Recompute and store cached episode/subtitle counts for one series.
-
-    Called during sync and by the /refresh-counts endpoint.
-    use_disk=True: also scans filesystem for external .srt files (slower but complete).
-    """
+    """Recompute and store cached episode/subtitle counts for one series."""
     from sqlalchemy.orm import subqueryload as _sl
     s = (
         db.query(Series)
@@ -367,22 +481,19 @@ def refresh_series_counts(db, series: Series, use_disk: bool = True) -> None:
     if not s:
         return
     dir_cache: dict[str, set[str]] = {} if use_disk else None  # type: ignore[assignment]
-    # Count ALL non-special episodes (season > 0), regardless of monitored flag.
-    # Unmonitored episodes can still have files+subtitles on disk — we want to
-    # reflect actual library state, not just Sonarr download targets.
     all_eps = [ep for ep in s.episodes if ep.season_number > 0]
     eps_with_file = [ep for ep in all_eps if ep.has_file]
     s.cached_ep_monitored = len(all_eps)
     s.cached_ep_with_file = len(eps_with_file)
     s.cached_cs_sub_count = sum(
         1 for ep in eps_with_file
-        if _has_cs_sub(ep, dir_cache)
+        if has_cs_sub(ep, dir_cache)
     )
     db.commit()
 
 
 def _refresh_all_counts_task() -> None:
-    """Background task: refresh cached counts for every series (disk scan included)."""
+    """Background task: refresh cached counts for every series (disk scan included). [reload trigger]"""
     from ..database import SessionLocal
     from ..services import job_log
     db = SessionLocal()
@@ -395,24 +506,8 @@ def _refresh_all_counts_task() -> None:
                 refresh_series_counts(db, s, use_disk=True)
             except Exception as exc:
                 log.warning("[refresh-counts] '%s': %s", s.title, exc)
-        job_log.finish_run(run, "done", f"{len(series_list)} sérií aktualizováno")
-        log.info("[refresh-counts] done — %d series updated", len(series_list))
-    except Exception as e:
-        job_log.finish_run(run, "error", str(e)[:300])
-    finally:
-        db.close()
-
-
-def _do_translate(series_id: int):
-    from ..database import SessionLocal
-    from ..services.ollama import translate_to_czech
-    db = SessionLocal()
-    try:
-        s = db.query(Series).filter(Series.id == series_id).first()
-        if s and s.overview and not s.overview_cs:
-            result = translate_to_czech(s.overview, context="anime synopsis")
-            if result:
-                s.overview_cs = result
-                db.commit()
+        job_log.finish_run(run, "done", f"{len(series_list)} sérií obnoveno")
+    except Exception as exc:
+        job_log.finish_run(run, "error", str(exc))
     finally:
         db.close()

@@ -72,7 +72,7 @@ class HnsScraper:
             r.raise_for_status()
 
             if str(r.url).rstrip("/") != LOGIN_URL.rstrip("/"):
-                self._cookies = dict(c.cookies)
+                self._cookies = {ck.name: ck.value for ck in c.cookies.jar}
                 log.info("HNS: již přihlášen (cookie)")
                 return  # already logged in
 
@@ -123,7 +123,7 @@ class HnsScraper:
                     log.error("HNS: přihlášení selhalo, final_url=%s", final_url)
                     raise PermissionError(f"hns.sk: přihlášení selhalo pro '{self.username}'")
 
-            self._cookies = dict(c.cookies)
+            self._cookies = {ck.name: ck.value for ck in c.cookies.jar}
             log.info("HNS: přihlášení OK")
 
     # ── Search ────────────────────────────────────────────────────────
@@ -160,6 +160,8 @@ class HnsScraper:
                 return []
 
             results = self._parse_episode_page(c, ep_url)
+            # Preferuj titulky v požadovaném jazyce (cs) před ostatními (např. sk)
+            results.sort(key=lambda r: r.get("language") != language)
             _log(f"nalezeno {len(results)} titulků")
             return results
 
@@ -167,7 +169,7 @@ class HnsScraper:
 
     def download(self, url: str, _retry: bool = False) -> bytes:
         if not self._cookies:
-            self.login()
+            self._login_or_raise()
 
         parsed   = urlparse(url)
         params   = parse_qs(parsed.query)
@@ -186,7 +188,7 @@ class HnsScraper:
                     if not _retry and "html" in str(e).lower():
                         log.info("HNS: session expirovala (episode page), přihlašuji se znovu...")
                         self._cookies = {}
-                        self.login()
+                        self._login_or_raise()
                         with self._make_client() as c2:
                             return self._download_from_episode_page(c2, ep_url)
                     raise
@@ -215,10 +217,20 @@ class HnsScraper:
                 if not _retry:
                     log.info("HNS: session expirovala, přihlašuji se znovu a zkouším ještě jednou...")
                     self._cookies = {}
+                    self._login_or_raise()
                     return self.download(url, _retry=True)
                 log.error("HNS: download vrátil HTML místo souboru i po re-loginu")
                 raise ValueError("HNS: server vrátil HTML místo souboru — session možná expirovala")
             return r2.content
+
+    def _login_or_raise(self):
+        """Volá login(); při špatných credentials přeloží chybu na uživatelsky srozumitelnou zprávu."""
+        try:
+            self.login()
+        except PermissionError:
+            raise PermissionError(
+                "HnS: přihlášení selhalo — zkontroluj credentials v Nastavení → Indexery"
+            )
 
     def _download_from_episode_page(self, c: httpx.Client, ep_url: str) -> bytes:
         """

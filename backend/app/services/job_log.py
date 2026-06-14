@@ -9,11 +9,14 @@ and after each new run.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from collections import deque
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
+
+log = logging.getLogger("anisubarr.job_log")
 
 MAX_RUNS = 200  # max rows to keep in DB
 
@@ -62,7 +65,7 @@ def _db_write(run: JobRun) -> None:
         finally:
             db.close()
     except Exception as e:
-        print(f"[job_log] DB write error: {e}")
+        log.warning("DB write error: %s", e)
 
 
 def _db_update(run: JobRun) -> None:
@@ -81,7 +84,7 @@ def _db_update(run: JobRun) -> None:
         finally:
             db.close()
     except Exception as e:
-        print(f"[job_log] DB update error: {e}")
+        log.warning("DB update error: %s", e)
 
 
 def _db_prune() -> None:
@@ -108,10 +111,41 @@ def _db_prune() -> None:
         finally:
             db.close()
     except Exception as e:
-        print(f"[job_log] DB prune error: {e}")
+        log.warning("DB prune error: %s", e)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
+def cleanup_stale_running() -> None:
+    """Mark any DB rows still 'running' as error — called on app startup after crash/restart."""
+    try:
+        from ..database import SessionLocal
+        from ..models.job_run import JobRunModel
+        db = SessionLocal()
+        try:
+            stale = db.query(JobRunModel).filter(JobRunModel.status == "running").all()
+            for row in stale:
+                row.status      = "error"
+                row.message     = "Přerušeno restartem serveru"
+                row.finished_at = datetime.now(timezone.utc)
+            if stale:
+                db.commit()
+                log.info("[job_log] Cleaned up %d stale running jobs", len(stale))
+        finally:
+            db.close()
+    except Exception as e:
+        log.warning("Stale job cleanup error: %s", e)
+
+
+def wal_checkpoint() -> None:
+    """Run SQLite WAL checkpoint to compact the WAL file (prevents unbounded growth)."""
+    try:
+        from ..database import engine
+        with engine.connect() as conn:
+            conn.execute(__import__("sqlalchemy").text("PRAGMA wal_checkpoint(TRUNCATE)"))
+    except Exception as e:
+        log.warning("WAL checkpoint error: %s", e)
+
 
 def start_run(job_id: str, job_name: str) -> JobRun:
     """Register a new job run. Persists immediately to DB."""
@@ -202,7 +236,7 @@ def get_runs(limit: int = 100) -> list[dict]:
         finally:
             db.close()
     except Exception as e:
-        print(f"[job_log] DB read error: {e}")
+        log.warning("DB read error: %s", e)
         return []
 
 
@@ -227,7 +261,7 @@ def cancel_run(run_id: str) -> bool:
         finally:
             db.close()
     except Exception as e:
-        print(f"[job_log] DB cancel error: {e}")
+        log.warning("DB cancel error: %s", e)
         return False
 
 

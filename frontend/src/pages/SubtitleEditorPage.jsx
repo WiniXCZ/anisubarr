@@ -192,7 +192,8 @@ export default function SubtitleEditorPage() {
   useEffect(() => {
     if (!seriesId) { setEpisodes([]); setEpisodeId(""); setSubs([]); setSubId(""); setCues([]); return; }
     getEpisodes(seriesId).then(eps => {
-      setEpisodes(eps.filter(e => e.has_file));
+      // Show episodes that have video OR subtitle files
+      setEpisodes(eps.filter(e => e.has_file || e.has_cs_sub));
       setEpisodeId("");
       setSubs([]);
       setSubId("");
@@ -211,14 +212,22 @@ export default function SubtitleEditorPage() {
   }, [episodeId]);
 
   // Load subtitle content when sub changes
-  const { data: subData, isLoading: loadingContent } = useQuery({
+  const { data: subData, isLoading: loadingContent, isError: contentError, error: contentErrorObj } = useQuery({
     queryKey: ["sub-content", subId],
     queryFn: () => getContent(subId),
     enabled: !!subId,
+    retry: 1,
   });
   useEffect(() => {
     if (subData) {
-      setCues(parseSrtToCues(subData.content));
+      const fmt = subData.format?.toLowerCase() || "srt";
+      if (fmt === "srt" || fmt === "vtt" || fmt === "sub") {
+        const parsed = parseSrtToCues(subData.content || "");
+        setCues(parsed);
+      } else {
+        // ASS/SSA: we can't edit in this view, show raw blocks as read-only
+        setCues([]);
+      }
       setDirty(false);
       setShiftMs(0);
       setShiftInput("0");
@@ -235,13 +244,23 @@ export default function SubtitleEditorPage() {
     setDirty(true);
   }, []);
 
-  // Shift mutation (preview)
+  // Shift mutation (preview – save: false → don't write to disk yet)
   const shiftMut = useMutation({
     mutationFn: () => doShift(subId, shiftMs),
     onSuccess: (data) => {
-      setCues(parseSrtToCues(data.content));
-      setDirty(true);
+      if (data?.content) {
+        const parsed = parseSrtToCues(data.content);
+        if (parsed.length > 0) {
+          setCues(parsed);
+          setDirty(true);
+          setSaveMsg({ ok: true, text: `Náhled posunu ${shiftMs > 0 ? "+" : ""}${shiftMs} ms – klikni Uložit pro zápis` });
+          setTimeout(() => setSaveMsg(null), 5000);
+        } else {
+          setSaveMsg({ ok: false, text: "Posun vrátil prázdný obsah – zkontroluj formát souboru" });
+        }
+      }
     },
+    onError: (e) => setSaveMsg({ ok: false, text: `Chyba posunu: ${e?.response?.data?.detail || e.message}` }),
   });
 
   // Save mutation
@@ -252,7 +271,7 @@ export default function SubtitleEditorPage() {
       setDirty(false);
       setTimeout(() => setSaveMsg(null), 4000);
     },
-    onError: (e) => setSaveMsg({ ok: false, text: `Chyba: ${e.message}` }),
+    onError: (e) => setSaveMsg({ ok: false, text: `Chyba ukládání: ${e?.response?.data?.detail || e.message}` }),
   });
 
   const selectedSub    = subs.find(s => String(s.id) === String(subId));
@@ -260,7 +279,7 @@ export default function SubtitleEditorPage() {
   const selectedEp     = episodes.find(e => String(e.id) === String(episodeId));
 
   return (
-    <div className="-mx-4 -my-6 flex flex-col" style={{ height: "calc(100vh - 3.5rem)" }}>
+    <div className="-mx-4 -my-6 flex flex-col" style={{ height: "calc(100dvh - 3.5rem)" }}>
 
       {/* ── Top header bar ─────────────────────────────────────────────────── */}
       <div className="flex-shrink-0 border-b border-border bg-surface px-4 py-3 flex flex-wrap items-center gap-3">
@@ -373,6 +392,27 @@ export default function SubtitleEditorPage() {
           {loadingContent && (
             <div className="flex items-center justify-center py-16">
               <Loader2 size={20} className="animate-spin text-muted" />
+            </div>
+          )}
+
+          {contentError && (
+            <div className="mx-4 mt-4 px-3 py-2.5 rounded-lg bg-red-900/20 border border-red-700/40 text-red-400 text-sm">
+              ✗ Nepodařilo se načíst soubor titulků:{" "}
+              {contentErrorObj?.response?.data?.detail || contentErrorObj?.message || "Neznámá chyba"}
+            </div>
+          )}
+
+          {subData && ["ass", "ssa"].includes(subData.format?.toLowerCase()) && (
+            <div className="mx-4 mt-4 px-3 py-2.5 rounded-lg bg-yellow-900/20 border border-yellow-700/40 text-yellow-400 text-sm">
+              ⚠ Formát <strong>{subData.format?.toUpperCase()}</strong> není podporován pro vizuální editaci.
+              Posun časování (shift) přes pravý panel funguje i pro ASS soubory.
+            </div>
+          )}
+
+          {subData && !["ass", "ssa"].includes(subData.format?.toLowerCase()) && !loadingContent && subId && cues.length === 0 && (
+            <div className="mx-4 mt-4 px-3 py-2.5 rounded-lg bg-yellow-900/20 border border-yellow-700/40 text-yellow-400 text-sm">
+              ⚠ Soubor byl načten, ale nepodařilo se parsovat žádné titulky.
+              Zkontroluj, zda je soubor platný SRT soubor (není prázdný nebo poškozený).
             </div>
           )}
 

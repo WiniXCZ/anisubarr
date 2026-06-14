@@ -41,10 +41,14 @@ export const getMe = () => api.get("/auth/me");
 // ── Series ────────────────────────────────
 export const getSeries          = ()              => api.get("/series");
 export const getSeriesById      = (id)            => api.get(`/series/${id}`);
-export const translateSeries    = (id)            => api.post(`/series/${id}/translate`);
-export const setWatchStatus     = (id, status)    => api.patch(`/series/${id}/watch-status`, { watch_status: status });
+export const translateSeries       = (id)              => api.post(`/series/${id}/translate`);
+export const translateDescription  = (id, force = false) =>
+  api.post(`/series/${id}/translate-description`, {}, { params: force ? { force: true } : {}, timeout: 120_000 });
 export const setEpisodeWatched  = (sid, eid, val) => api.patch(`/series/${sid}/episodes/${eid}/watched`, { watched: val });
 export const refreshCounts      = ()              => api.post("/series/refresh-counts");
+export const getOrphanedFolders = ()              => api.get("/series/orphaned-folders");
+export const getDemotionCheck   = (id)            => api.get(`/series/${id}/demotion-check`);
+export const fetchEnglishTitle  = (id)            => api.post(`/series/${id}/fetch-english-title`);
 
 // ── Sync ──────────────────────────────────
 export const syncAll         = ()          => api.post("/sync/sonarr");
@@ -75,16 +79,24 @@ export const writeSeriesNfo    = (id)  => api.post(`/nfo/write/series/${id}`);
 export const writeAllNfo       = (id)  => api.post(`/nfo/write/series/${id}/all`);
 export const writeEpisodeNfo   = (id)  => api.post(`/nfo/write/episode/${id}`);
 export const writeAllSeriesNfo = ()    => api.post("/nfo/write/all");
+export const refreshSeriesNfo  = (id)  => api.post(`/nfo/refresh/${id}`);
 
 // ── Users (admin) ─────────────────────────
-export const getUsers    = ()           => api.get("/users/");
-export const createUser  = (data)       => api.post("/users/", data);
-export const updateUser  = (id, data)   => api.patch(`/users/${id}`, data);
-export const deleteUser  = (id)         => api.delete(`/users/${id}`);
+export const getUsers              = ()           => api.get("/users/");
+export const createUser            = (data)       => api.post("/users/", data);
+export const updateUser            = (id, data)   => api.patch(`/users/${id}`, data);
+export const deleteUser            = (id)         => api.delete(`/users/${id}`);
+export const getUserPermissions    = (id)         => api.get(`/users/${id}/permissions`);
+export const updateUserPermissions = (id, data)   => api.put(`/users/${id}/permissions`, data);
 
 // ── Jobs log ──────────────────────────────
 export const getJobs   = (limit = 100) => api.get("/jobs", { params: { limit } });
 export const cancelJob = (runId)       => api.post(`/jobs/${runId}/cancel`);
+
+// ── Scheduler jobs ────────────────────────
+export const getSchedulerJobs   = ()               => api.get("/schedule");
+export const updateSchedulerJob = (jobId, data)    => api.patch(`/schedule/${jobId}`, data);
+export const runSchedulerJobNow = (jobId)          => api.post(`/schedule/${jobId}/run`);
 
 // ── Subtitles ─────────────────────────────
 export const searchSubtitles    = (data) => api.post("/subtitles/search",               data);
@@ -100,22 +112,32 @@ export const deleteDiskFile     = (path) => api.post("/subtitles/delete-file", {
 export const uploadSubtitle        = (formData) => api.post("/subtitles/upload", formData, {
   headers: { "Content-Type": "multipart/form-data" },
 });
-export const downloadAllSubtitles  = (seriesId)   => api.post(`/subtitles/download-all/${seriesId}`);
+export const downloadAllSubtitles  = (seriesId, force = false) => api.post(`/subtitles/download-all/${seriesId}${force ? '?force=true' : ''}`);
 export const downloadBestBulk          = (episodeIds) => api.post("/subtitles/download-best-bulk", { episode_ids: episodeIds });
 export const downloadAllBulkSeries     = (seriesIds)  => api.post("/subtitles/download-all-bulk-series", { series_ids: seriesIds });
 export const deleteSubsBySeries        = (seriesIds, language = null) =>
   api.post("/subtitles/delete-by-series", { series_ids: seriesIds, ...(language ? { language } : {}) });
 export const writeEpisodesNfo          = (episodeIds) => api.post("/nfo/write/episodes", { episode_ids: episodeIds });
 
-// ── Overseerr ─────────────────────────────
-export const overseerrStatus      = ()          => api.get("/overseerr/status");
-export const overseerrRequests    = (filter)    => api.get("/overseerr/requests", { params: { filter, take: 50 } });
-export const overseerrRequest     = (seriesId)  => api.post(`/overseerr/request/${seriesId}`);
-export const overseerrApprove     = (reqId)     => api.post(`/overseerr/request/${reqId}/approve`);
-export const overseerrDecline     = (reqId)     => api.post(`/overseerr/request/${reqId}/decline`);
-export const overseerrCancelReq   = (reqId)     => api.delete(`/overseerr/request/${reqId}`);
-export const overseerrIssues      = (params)    => api.get("/overseerr/issues", { params });
-export const overseerrSeriesIssues= (seriesId)  => api.get(`/overseerr/issues/series/${seriesId}`);
+// ── Seerr ─────────────────────────────────
+export const seerrStatus          = ()          => api.get("/seerr/status");
+export const seerrRequests        = (filter)    => api.get("/seerr/requests", { params: { filter, take: 50 } });
+export const seerrRequest         = (seriesId)  => api.post(`/seerr/request/${seriesId}`);
+export const seerrApprove         = (reqId)     => api.post(`/seerr/request/${reqId}/approve`);
+export const seerrDecline         = (reqId)     => api.post(`/seerr/request/${reqId}/decline`);
+export const seerrCancelReq       = (reqId)     => api.delete(`/seerr/request/${reqId}`);
+export const seerrIssues          = (params)    => api.get("/seerr/issues", { params });
+export const seerrSeriesIssues    = (seriesId)  => api.get(`/seerr/issues/series/${seriesId}`);
+export const seerrSyncNow         = ()          => api.post("/seerr/sync");
+// Backward compat aliases
+export const overseerrStatus      = seerrStatus;
+export const overseerrRequests    = seerrRequests;
+export const overseerrRequest     = seerrRequest;
+export const overseerrApprove     = seerrApprove;
+export const overseerrDecline     = seerrDecline;
+export const overseerrCancelReq   = seerrCancelReq;
+export const overseerrIssues      = seerrIssues;
+export const overseerrSeriesIssues= seerrSeriesIssues;
 
 // ── API Keys ──────────────────────────────
 export const getApiKeys    = ()           => api.get("/api-keys");
@@ -136,7 +158,8 @@ export const publishSeries      = (id)  => api.post(`/promotion/publish/${id}`);
 export const demoteSeries       = (id)  => api.post(`/promotion/demote/${id}`);
 
 // ── Emby ──────────────────────────────────
-export const embyStatus    = ()           => api.get("/emby/status");
+export const embyStatus       = ()    => api.get("/emby/status");
+export const getEmbySeriesUrl = (id)  => api.get(`/emby/series/${id}/item`);
 
 // ── Paths (SMB test) ──────────────────────
 export const smbTest       = ()           => api.get("/paths/smb-test");
@@ -178,5 +201,43 @@ export const deleteGlossaryEntry = (id)     => api.delete(`/glossary/${id}`);
 
 // ── File browser ──────────────────────────
 export const browseFiles = (path = '') => api.get('/files/browse', { params: path ? { path } : {} });
+
+// ── qBittorrent ───────────────────────────
+export const getQbittorrentStatus  = ()  => api.get('/qbittorrent/status');
+export const getQbittorrentTorrents = () => api.get('/qbittorrent/torrents');
+
+// ── Episode markers ───────────────────────
+export const getEpisodeMarkers   = (epId)             => api.get(`/episodes/${epId}/markers`);
+export const setEpisodeMarker    = (epId, type, time) => api.post(`/episodes/${epId}/markers`, { type, time_seconds: time });
+export const deleteEpisodeMarker = (epId, type)       => api.delete(`/episodes/${epId}/markers/${type}`);
+
+// ── Video streaming + cut ─────────────────
+export const getVideoStreamUrl = (epId) => {
+  const token = localStorage.getItem("token") || "";
+  return `/api/video/stream/${epId}?token=${encodeURIComponent(token)}`;
+};
+export const cutVideo = (epId, fromSec, toSec, suffix = "_cut") =>
+  api.post(`/video/cut/${epId}`, { from_second: fromSec, to_second: toSec, suffix }, { timeout: 300_000 });
+
+// ── Discover (AniList) ────────────────────────────────────────────────────────
+export const getTrending        = ()         => api.get("/discover/trending");
+export const getSeasonal        = (s, y)     => api.get("/discover/seasonal", { params: { season: s, year: y } });
+
+// ── Watchlist ─────────────────────────────────────────────────────────────────
+export const getWatchlist       = ()         => api.get("/watchlist");
+export const addToWatchlist     = (data)     => api.post("/watchlist", data);
+export const removeFromWatchlist = (id)      => api.delete(`/watchlist/${id}`);
+
+// ── Quick-add to Sonarr ───────────────────────────────────────────────────────
+export const getSonarrRootFolders2    = ()     => api.get("/sonarr/root-folders");
+export const getSonarrQualityProfiles = ()     => api.get("/sonarr/quality-profiles");
+export const sonarrAddSeries          = (data) => api.post("/sonarr/add", data);
+
+// ── Audit (subtitle confidence / damage / state machine) ─────────────────────
+export const getAuditStatusAll  = ()         => api.get("/audit/status");
+export const getAuditStatus     = (seriesId) => api.get(`/audit/${seriesId}`);
+export const getAuditLog        = (seriesId, limit = 200) => api.get(`/audit/${seriesId}/log`, { params: { limit } });
+export const runAuditCheckAll   = ()         => api.post("/audit/check");
+export const runAuditCheck      = (seriesId) => api.post(`/audit/check/${seriesId}`);
 
 export default api;

@@ -19,6 +19,9 @@ class Series(Base):
     # ── AniList identifiers ───────────────────────────────────────────
     anilist_id      = Column(Integer, nullable=True, index=True)
 
+    # ── TMDb identifiers ──────────────────────────────────────────────
+    tmdb_id         = Column(Integer, nullable=True, index=True)
+
     # ── Core metadata ─────────────────────────────────────────────────
     title           = Column(String, nullable=False)
     sort_title      = Column(String, nullable=True)
@@ -46,7 +49,8 @@ class Series(Base):
     certification   = Column(String, nullable=True)   # e.g. "TV-14"
 
     # ── Images ────────────────────────────────────────────────────────
-    poster_url      = Column(String, nullable=True)   # Sonarr proxy URL
+    poster_url      = Column(String, nullable=True)   # Sonarr proxy URL / TMDb poster
+    backdrop_url    = Column(String, nullable=True)   # TMDb backdrop
     fanart_url      = Column(String, nullable=True)
     banner_url      = Column(String, nullable=True)
     cover_url       = Column(String, nullable=True)   # AniList cover (hi-res)
@@ -86,9 +90,20 @@ class Series(Base):
     # ── Dates ─────────────────────────────────────────────────────────
     sonarr_added    = Column(String, nullable=True)   # ISO datetime when added to Sonarr
 
+    # ── Emby integration ─────────────────────────────────────────────
+    emby_id         = Column(String, nullable=True)   # Emby item ID for deep links
+
     # ── Promotion / issue tracking ────────────────────────────────────
     promoted        = Column(Boolean, default=False, nullable=False)
     has_issue       = Column(Boolean, default=False, nullable=False)
+    promoted_at     = Column(DateTime(timezone=True), nullable=True)  # set when promoted=True
+
+    # ── Subtitle audit / state machine ─────────────────────────────────
+    # CLEAN / PENDING / ABANDONED / DAMAGED / PARTIAL / PENDING_TRANSLATION
+    audit_status        = Column(String, nullable=True)
+    audit_status_reason = Column(Text, nullable=True)
+    audit_status_since  = Column(DateTime(timezone=True), nullable=True)
+    last_hiyori_check_at = Column(DateTime(timezone=True), nullable=True)
 
     # ── Sync timestamps ───────────────────────────────────────────────
     synced_at       = Column(DateTime(timezone=True), nullable=True)
@@ -120,6 +135,7 @@ class Episode(Base):
     title           = Column(String, nullable=True)
     title_cs        = Column(String, nullable=True)   # translated
     overview        = Column(Text, nullable=True)
+    overview_cs     = Column(Text, nullable=True)     # AI-translated Czech
     air_date        = Column(String, nullable=True)
     air_date_utc    = Column(String, nullable=True)
     runtime         = Column(Integer, nullable=True)  # minutes (from episodeFile mediaInfo)
@@ -175,7 +191,7 @@ class Subtitle(Base):
     is_embedded     = Column(Boolean, default=False)
     is_hearing_imp  = Column(Boolean, default=False)
     format          = Column(String, nullable=True)    # "srt" / "ass" / "sup"
-    detected_lang   = Column(String, nullable=True)    # skutečný detekovaný jazyk ("cs"/"sk"/None)
-    downloaded_at   = Column(DateTime(timezone=True), server_default=func.now())
+    detected_lang   = Column(String, nullable=True)    # skutecny detekovany jazyk ("cs"/"sk"/None)
+    downloaded_at   = Column(DateTime(timezone=True), default=None, nullable=True)
 
     episode = relationship("Episode", back_populates="subtitles")

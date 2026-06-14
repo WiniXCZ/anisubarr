@@ -4,6 +4,8 @@ nfo.py – Endpoints for generating and writing NFO metadata files.
 Emby/Jellyfin/Kodi read these to get rich metadata without needing
 internet scraping (useful for anime where online databases are patchy).
 """
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -11,6 +13,8 @@ from ..deps import get_current_user, require_admin
 from ..models.series import Series, Episode
 from ..models.user import User
 from ..services import nfo as nfo_svc
+
+log = logging.getLogger("anisubarr.nfo")
 
 router = APIRouter(prefix="/api/nfo", tags=["nfo"])
 
@@ -45,6 +49,23 @@ def preview_episode_nfo(
         "path":    nfo_svc.episode_nfo_path(ep),
         "content": nfo_svc.build_episode_nfo(ep, series=ep.series),
     }
+
+
+# ──────────────────────────────────────────
+# Refresh (translate description + write NFO)
+# ──────────────────────────────────────────
+
+@router.post("/refresh/{series_id}", status_code=202)
+def refresh_series_nfo(
+    series_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Translate description to Czech (cached) then write tvshow.nfo. Runs in background."""
+    s = _get_series(db, series_id)
+    background_tasks.add_task(_bg_refresh, series_id)
+    return {"status": "queued", "series": s.title}
 
 
 # ──────────────────────────────────────────
@@ -123,9 +144,44 @@ def write_all_nfo(
     return {"status": "queued", "series_count": len(series_ids)}
 
 
+@router.post("/refresh-all", status_code=202)
+def refresh_all_nfo(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """Translate Czech description (if missing) + write tvshow.nfo for every series. Runs in background."""
+    series_ids = [s.id for s in db.query(Series).all()]
+    background_tasks.add_task(_bg_refresh_all, series_ids)
+    return {"status": "queued", "series_count": len(series_ids)}
+
+
 # ──────────────────────────────────────────
 # Background tasks
 # ──────────────────────────────────────────
+
+def _bg_refresh(series_id: int):
+    from ..database import SessionLocal
+    from ..services import job_log
+    db = SessionLocal()
+    try:
+        s = db.query(Series).filter(Series.id == series_id).first()
+        if not s:
+            return
+        run = job_log.start_run("nfo_refresh", f"NFO refresh: {s.title}")
+        try:
+            result = nfo_svc.refresh_series_nfo(s, db)
+            translated = "přeloženo" if result.get("translated") else "popis již byl přeložen"
+            msg = f"{'OK' if result['ok'] else 'FAIL'} — {translated}"
+            if result.get("error"):
+                msg += f" — {result['error']}"
+            job_log.finish_run(run, "done" if result["ok"] else "error", msg)
+        except Exception as e:
+            job_log.finish_run(run, "error", str(e)[:300])
+            raise
+    finally:
+        db.close()
+
 
 def _bg_write_all(series_id: int):
     from ..database import SessionLocal
@@ -140,7 +196,7 @@ def _bg_write_all(series_id: int):
             result = nfo_svc.write_all_nfo(s)
             msg = f"{result['ok_count']} OK, {result['fail_count']} selhalo"
             job_log.finish_run(run, "done", msg)
-            print(f"[nfo] '{s.title}': {msg}")
+            log.debug("'%s': %s", s.title, msg)
         except Exception as e:
             job_log.finish_run(run, "error", str(e)[:300])
             raise
@@ -169,9 +225,36 @@ def _bg_write_episodes(episode_ids: list[int]):
                 fail += 1
         job_log.finish_run(run, "done", f"{ok} OK, {fail} selhalo")
     except Exception as e:
-        print(f"[nfo] _bg_write_episodes error: {e}")
+        log.error("_bg_write_episodes error: %s", e)
     finally:
         db.close()
+
+
+def _bg_refresh_all(series_ids: list[int]):
+    from ..database import SessionLocal
+    from ..services import job_log
+    run = job_log.start_run("nfo_refresh_all", f"NFO překlad+zápis vše ({len(series_ids)} seriálů)")
+    ok_total = fail_total = translated_total = 0
+    for sid in series_ids:
+        db = SessionLocal()
+        try:
+            s = db.query(Series).filter(Series.id == sid).first()
+            if s:
+                result = nfo_svc.refresh_series_nfo(s, db)
+                if result["ok"]:
+                    ok_total += 1
+                    if result.get("translated"):
+                        translated_total += 1
+                else:
+                    fail_total += 1
+                log.debug("'%s': ok=%s translated=%s", s.title, result["ok"], result.get("translated"))
+        except Exception as e:
+            log.error("series %d refresh error: %s", sid, e)
+            fail_total += 1
+        finally:
+            db.close()
+    msg = f"{ok_total} OK ({translated_total} prelozeno), {fail_total} selhalo"
+    job_log.finish_run(run, "done", msg)
 
 
 def _bg_write_batch(series_ids: list[int]):
@@ -187,9 +270,9 @@ def _bg_write_batch(series_ids: list[int]):
                 result = nfo_svc.write_all_nfo(s)
                 ok_total   += result["ok_count"]
                 fail_total += result["fail_count"]
-                print(f"[nfo] '{s.title}': {result['ok_count']} OK / {result['fail_count']} fail")
+                log.debug("'%s': %d OK / %d fail", s.title, result["ok_count"], result["fail_count"])
         except Exception as e:
-            print(f"[nfo] series {sid} error: {e}")
+            log.error("series %d error: %s", sid, e)
         finally:
             db.close()
     job_log.finish_run(run, "done", f"{ok_total} OK, {fail_total} selhalo")

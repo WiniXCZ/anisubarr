@@ -1,8 +1,6 @@
+import { memo } from "react";
 import { Link } from "react-router-dom";
 import { Star, CheckCircle2, AlertCircle, Clock, Check, BadgeCheck } from "lucide-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { setWatchStatus } from "../api/client";
-import WatchStatusButton, { watchOptFor } from "./WatchStatusButton";
 import clsx from "clsx";
 
 const STATUS_COLORS = {
@@ -62,15 +60,7 @@ function CzPip({ series }) {
   );
 }
 
-export default function AnimeCard({ series, rootColor, rootFolder, selectionMode = false, selected = false, onToggle }) {
-  const qc = useQueryClient();
-  const watchMutation = useMutation({
-    mutationFn: (status) => setWatchStatus(series.id, status),
-    onSuccess: () => qc.invalidateQueries(["series"]),
-  });
-
-  const { Icon: WIcon, color: wColor } = watchOptFor(series.watch_status);
-
+const AnimeCard = memo(function AnimeCard({ series, rootColor, rootFolder, selectionMode = false, selected = false, onToggle }) {
   const inner = (
     <>
       {/* Poster */}
@@ -90,7 +80,7 @@ export default function AnimeCard({ series, rootColor, rootFolder, selectionMode
         {!selectionMode && (
           series.has_issue ? (
             <div className="absolute top-1.5 right-1.5 flex items-center justify-center w-5 h-5 rounded-full bg-orange-500 text-white text-[11px] font-bold shadow-md z-10"
-                 title="Otevřená issue v Overseerr">
+                 title="Otevřená issue v Seerr">
               !
             </div>
           ) : series.promoted ? (
@@ -109,7 +99,7 @@ export default function AnimeCard({ series, rootColor, rootFolder, selectionMode
         )}
 
         {/* Selection mode: checkbox overlay — top-left */}
-        {selectionMode ? (
+        {selectionMode && (
           <div className={clsx(
             "absolute top-1.5 left-1.5 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all",
             selected
@@ -117,16 +107,6 @@ export default function AnimeCard({ series, rootColor, rootFolder, selectionMode
               : "bg-black/50 border-white/60 text-transparent"
           )}>
             <Check size={13} />
-          </div>
-        ) : (
-          /* Watch status — top-left (only when not in selection mode) */
-          <div className="absolute top-1.5 left-1.5" onClick={e => e.preventDefault()}>
-            <WatchStatusButton
-              status={series.watch_status}
-              onChange={(s) => watchMutation.mutate(s)}
-              size="sm"
-              isPending={watchMutation.isPending}
-            />
           </div>
         )}
 
@@ -153,7 +133,7 @@ export default function AnimeCard({ series, rootColor, rootFolder, selectionMode
           "text-xs font-semibold leading-tight line-clamp-2 transition-colors",
           selectionMode && selected ? "text-accent" : "text-text group-hover:text-accent"
         )}>
-          {series.title_romaji || series.title}
+          {series.title_english || series.title_romaji || series.title}
         </h3>
 
         {/* Year + score row */}
@@ -214,4 +194,6 @@ export default function AnimeCard({ series, rootColor, rootFolder, selectionMode
       {inner}
     </Link>
   );
-}
+});
+
+export default AnimeCard;

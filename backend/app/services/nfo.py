@@ -22,9 +22,20 @@ from xml.etree import ElementTree as ET
 from xml.dom import minidom
 from typing import Optional
 
-from .path_resolver import resolve, ensure_smb
+from .path_resolver import resolve, ensure_smb, unc_to_local
 
 log = logging.getLogger("anisubarr.nfo")
+
+# Characters forbidden in XML 1.0 (outside of legal ranges)
+import re as _re
+_XML_INVALID_CHARS = _re.compile(
+    r"[^\x09\x0A\x0D\x20-퟿-�\U00010000-\U0010FFFF]"
+)
+
+
+def _sanitize_xml_text(text: str) -> str:
+    """Strip characters that are illegal in XML 1.0 (e.g. null bytes, control chars)."""
+    return _XML_INVALID_CHARS.sub("", text)
 
 
 # ──────────────────────────────────────────
@@ -34,7 +45,7 @@ log = logging.getLogger("anisubarr.nfo")
 def _el(parent: ET.Element, tag: str, text: Optional[str] = None, **attribs) -> ET.Element:
     e = ET.SubElement(parent, tag, **attribs)
     if text is not None:
-        e.text = str(text)
+        e.text = _sanitize_xml_text(str(text))
     return e
 
 
@@ -69,8 +80,9 @@ def build_tvshow_nfo(series) -> str:
     """
     root = ET.Element("tvshow")
 
-    _el(root, "title",         series.title_romaji or series.title)
-    _el(root, "originaltitle", series.title_japanese or series.title)
+    # EN title preferred by Emby; romaji as fallback
+    _el(root, "title",         series.title_english or series.title_romaji or series.title)
+    _el(root, "originaltitle", series.title_japanese or series.title_romaji or series.title)
 
     if series.sort_title:
         _el(root, "sorttitle", series.sort_title)
@@ -158,8 +170,9 @@ def build_episode_nfo(episode, series=None) -> str:
     if episode.absolute_episode_number is not None:
         _el(root, "absoluteepisodenumber", str(episode.absolute_episode_number))
 
-    if episode.overview:
-        _el(root, "plot", episode.overview)
+    _ep_overview = episode.overview_cs or episode.overview
+    if _ep_overview:
+        _el(root, "plot", _ep_overview)
 
     if episode.air_date:
         _el(root, "aired", episode.air_date)
@@ -223,6 +236,8 @@ def tvshow_nfo_path(series) -> Optional[str]:
         return None
     try:
         local = resolve(series.path)
+        if not local:
+            return None
         return os.path.join(local, "tvshow.nfo")
     except Exception:
         return None
@@ -247,10 +262,15 @@ def episode_nfo_path(episode) -> Optional[str]:
 
 def _write(path: str, content: str) -> None:
     ensure_smb(path)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    local_path = unc_to_local(path)   # UNC → drive letter (Y:\...) on Windows; no-op on Linux
+    if local_path != path:
+        log.debug(f"NFO path resolved: {path} → {local_path}")
+    dirpath = os.path.dirname(local_path)
+    if dirpath:
+        os.makedirs(dirpath, exist_ok=True)
+    with open(local_path, "w", encoding="utf-8") as f:
         f.write(content)
-    log.info(f"NFO → {path}")
+    log.info(f"NFO → {local_path}")
 
 
 # ──────────────────────────────────────────
@@ -289,6 +309,24 @@ def write_episode_nfo(episode) -> dict:
     except Exception as e:
         log.error(f"write_episode_nfo ep {episode.id}: {e}")
         return {"path": path, "ok": False, "error": str(e)}
+
+
+def refresh_series_nfo(series, db) -> dict:
+    """
+    Translate description to Czech (if not cached), then write tvshow.nfo.
+    Returns {"path": ..., "ok": bool, "translated": bool, "error": ...}.
+    """
+    translated = False
+    try:
+        from .ai_description import ensure_czech_description
+        cs = ensure_czech_description(series, db)
+        translated = bool(cs)
+    except Exception as e:
+        log.warning("Description translation error for series %d: %s", series.id, e)
+
+    result = write_series_nfo(series)
+    result["translated"] = translated
+    return result
 
 
 def write_all_nfo(series) -> dict:

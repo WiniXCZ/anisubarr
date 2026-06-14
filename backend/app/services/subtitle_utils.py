@@ -149,22 +149,34 @@ def detect_language_from_name(name: str, context: str = "") -> str:
         "jp": "ja", "ja": "ja", "jpn": "ja",
     }
 
-    # ── 1. Filename / URL ──────────────────────────────────────────────────────
+    # ── 1. Known English release groups (highest priority) ────────────────────
+    # These groups exclusively produce English subtitles — checked before any
+    # filename-based heuristic so a file named "show.cz.srt" from HorribleSubs
+    # is still tagged "en".
+    _EN_GROUPS = {
+        "horriblesubs", "subsplease", "erai-raws", "judas", "commie",
+        "fff", "gjm", "nysubs", "damedesuyo", "reaktor",
+        "underwater", "beatrice-raws", "erairaw", "sallysubs", "tenshi",
+        "eclipse", "chihiro", "gg", "doki", "frostii", "sage",
+        "hiryuu", "asenshi", "ntr", "coalgirls", "thora",
+    }
+    combined_lower = f"{name} {context}".lower()
+    for group in _EN_GROUPS:
+        if group in combined_lower:
+            return "en"
+
+    # ── 2. Filename / URL ──────────────────────────────────────────────────────
     # Strip query string if it's a URL
     fname = re.sub(r"\?.*$", "", name)
     # Get just the basename (handles both / and \)
     fname = re.split(r"[/\\]", fname)[-1].lower()
-    # Remove extension(s) – e.g.  show.s01e01.cs.srt  →  show.s01e01.cs
-    # We look for patterns like  .LANG.  or  _LANG_  or  -LANG-  in the name
-    # Match: word-boundary + code + word-boundary
-    _BOUNDARY = r"(?<=[._\-\s\[({])|(?=^)"
     for raw, canonical in _LANG_MAP.items():
         # Pattern: surrounded by non-alphanumeric (or start/end)
         pat = rf"(?:^|[._\-\s\[({{(])({re.escape(raw)})(?:[._\-\s\])}}),]|$)"
         if re.search(pat, fname, re.IGNORECASE):
             return canonical
 
-    # ── 2. Context text keywords ───────────────────────────────────────────────
+    # ── 3. Context text keywords ───────────────────────────────────────────────
     ctx = context.lower()
     _KEYWORDS: list[tuple[str, str]] = [
         # Czech
@@ -187,26 +199,8 @@ def detect_language_from_name(name: str, context: str = "") -> str:
         if keyword in ctx:
             return lang
 
-    # ── 3. Default ─────────────────────────────────────────────────────────────
+    # ── 4. Default ─────────────────────────────────────────────────────────────
     return "cs"
-
-
-def server_path_to_unc(server_path: str, smb_host: str) -> str:
-    """Convert a Linux server path to a Windows UNC path."""
-    rel     = server_path.lstrip("/")
-    rel_win = rel.replace("/", "\\")
-    host    = smb_host.strip("\\")
-    return f"\\\\{host}\\{rel_win}"
-
-
-def subtitle_save_path(episode_path: str, language: str, ext: str, smb_host: str = "") -> str:
-    """Return the path where a subtitle file should be saved next to its video."""
-    if smb_host and not episode_path.startswith("\\\\"):
-        unc = server_path_to_unc(episode_path, smb_host)
-    else:
-        unc = episode_path
-    base = os.path.splitext(unc)[0]
-    return f"{base}.{language}.{ext}"
 
 
 def smb_authenticate(smb_host: str, smb_user: str, smb_pass: str,

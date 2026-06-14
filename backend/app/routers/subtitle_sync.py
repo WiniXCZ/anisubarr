@@ -31,6 +31,7 @@ from ..deps import get_current_user
 from ..models.series import Episode, Series
 from ..models.user import User
 from ..services import path_resolver
+from ..utils import CS_LANGS
 
 log = logging.getLogger("anisubarr.subtitle_sync")
 
@@ -98,7 +99,6 @@ def _unc_to_local(path: str) -> str:
 
 router = APIRouter(prefix="/api/subtitle-sync", tags=["subtitle-sync"])
 
-_CS_LANGS = {"cs", "cze", "cz", "ces"}
 _SUB_EXTS  = ["srt", "ass", "ssa", "vtt"]
 
 
@@ -113,7 +113,7 @@ def _find_cs_sub(ep: Episode) -> str | None:
 
     # 1) DB subtitles (non-embedded)
     for sub in ep.subtitles:
-        if sub.language.lower() not in _CS_LANGS:
+        if sub.language.lower() not in CS_LANGS:
             continue
         if sub.is_embedded:
             continue
@@ -135,7 +135,7 @@ def _find_cs_sub(ep: Episode) -> str | None:
         directory   = os.path.dirname(local_video)
         video_stem  = os.path.splitext(os.path.basename(local_video))[0]
 
-        for lang in _CS_LANGS:
+        for lang in CS_LANGS:
             for ext in _SUB_EXTS:
                 candidate = os.path.join(directory, f"{video_stem}.{lang}.{ext}")
                 if os.path.isfile(candidate):
@@ -165,7 +165,7 @@ def _extract_reference_sub(video_paths: list[str], ffprobe_bin: str, ffmpeg_bin:
                     "-of", "csv=p=0",
                     video_path,
                 ],
-                capture_output=True, text=True, timeout=20,
+                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=20,
             )
             if probe.returncode != 0 or not probe.stdout.strip():
                 log.debug("_extract_reference_sub: no subtitle streams in %s (rc=%s err=%s)",
@@ -183,7 +183,7 @@ def _extract_reference_sub(video_paths: list[str], ffprobe_bin: str, ffmpeg_bin:
                     "-c:s", "srt",
                     tmp_path,
                 ],
-                capture_output=True, text=True, timeout=60,
+                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60,
             )
 
             if extract.returncode == 0 and os.path.getsize(tmp_path) > 100:
@@ -234,7 +234,7 @@ def _extract_reference_audio(video_paths: list[str], ffmpeg_bin: str, duration_s
                     "-t", str(duration_sec),
                     tmp_path,
                 ],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120,
             )
 
             if extract.returncode == 0 and os.path.getsize(tmp_path) > 1000:
@@ -258,7 +258,7 @@ def _extract_reference_audio(video_paths: list[str], ffmpeg_bin: str, duration_s
                     "-t", str(duration_sec),
                     tmp_path,
                 ],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120,
             )
 
             if extract2.returncode == 0 and os.path.getsize(tmp_path) > 1000:
@@ -377,6 +377,8 @@ def _run_alass(ep: Episode) -> dict:
             [alass_bin, reference, cs_sub, tmp_path],
             capture_output=True,
             text=True,
+            encoding='utf-8',
+            errors='replace',
             timeout=180,
         )
 
@@ -613,8 +615,4 @@ def sync_bulk_series(
         raise HTTPException(400, "Žádné epizody se soubory ve vybraných sériích")
 
     background_tasks.add_task(_sync_episodes_bg, ep_ids)
-    return {
-        "status":  "queued",
-        "message": f"{len(ep_ids)} epizod zařazeno do fronty",
-        "count":   len(ep_ids),
-    }
+    return {"status": "queued", "count": len(ep_ids)}

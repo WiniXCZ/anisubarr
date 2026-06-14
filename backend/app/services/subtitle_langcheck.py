@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from .lang_detect import detect_lang_from_file
 from .path_resolver import resolve as resolve_path   # server_path → local/UNC path
+from ..utils import CS_LANGS
 
 log = logging.getLogger("anisubarr.langcheck")
 
@@ -104,8 +105,45 @@ def check_and_fix_subtitle(db: Session, subtitle, dry_run: bool = False) -> dict
         return {"action": "skipped", "reason": f"low confidence ({conf:.0%})"}
 
     stored_lang = subtitle.language  # "cs" / "sk" atd.
-    if detected == stored_lang:
+    # Normalize Czech aliases (cs/cze/ces/cz) before comparing — a stored
+    # "cze"/"ces"/"cz" matching a detected "cs" is NOT a language mismatch.
+    norm_stored   = "cs" if stored_lang in CS_LANGS else stored_lang
+    norm_detected = "cs" if detected    in CS_LANGS else detected
+    if norm_detected == norm_stored:
         return {"action": "ok", "lang": detected, "conf": conf}
+
+    # ── SK→CS: zkus AI překlad (DeepSeek) místo pouhého přejmenování ────────
+    if detected == "sk" and norm_stored == "cs":
+        if dry_run:
+            return {
+                "action": "would_translate",
+                "file": path.name,
+                "from": stored_lang,
+                "to": detected,
+                "conf": conf,
+            }
+        from .subtitle_translate import translate_subtitle_file
+        ok, msg = translate_subtitle_file(path, db)
+        if ok:
+            subtitle.language      = "cs"
+            subtitle.detected_lang = "cs"
+            db.commit()
+            log.info(
+                f"[langcheck] EP {subtitle.episode_id}: SK→CS přeloženo AI "
+                f"({msg}) | {path.name}"
+            )
+            return {
+                "action": "translated",
+                "file": path.name,
+                "from": "sk",
+                "to": "cs",
+                "conf": conf,
+            }
+        log.warning(
+            f"[langcheck] EP {subtitle.episode_id}: AI překlad SK→CS selhal "
+            f"({msg}) — fallback na přejmenování"
+        )
+        # fall through to the rename/cooldown logic below
 
     # ── Jazyk nesedí — opravíme ─────────────────────────────────────────────
     if dry_run:
@@ -181,7 +219,7 @@ def run_langcheck(
 
     log.info(f"[langcheck] start — {len(subs)} titulků s language='{language_filter}'")
 
-    stats = {"total": len(subs), "ok": 0, "fixed": 0, "skipped": 0, "errors": 0}
+    stats = {"total": len(subs), "ok": 0, "fixed": 0, "translated": 0, "skipped": 0, "errors": 0}
     details = []
 
     for sub in subs:
@@ -190,6 +228,8 @@ def run_langcheck(
 
         if action in ("ok",):
             stats["ok"] += 1
+        elif action in ("translated", "would_translate"):
+            stats["translated"] += 1
         elif action in ("fixed", "would_fix"):
             stats["fixed"] += 1
         elif action == "error":
@@ -203,8 +243,8 @@ def run_langcheck(
 
     stats["details"] = details
     log.info(
-        f"[langcheck] hotovo — ok={stats['ok']} fixed={stats['fixed']} "
-        f"skip={stats['skipped']} err={stats['errors']}"
+        f"[langcheck] hotovo — ok={stats['ok']} translated={stats['translated']} "
+        f"fixed={stats['fixed']} skip={stats['skipped']} err={stats['errors']}"
     )
     return stats
 

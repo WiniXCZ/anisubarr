@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 import httpx
 from bs4 import BeautifulSoup
@@ -14,6 +15,15 @@ log = logging.getLogger("anisubarr.hiyori")
 
 BASE_URL  = "https://hiyori.cz"
 LOGIN_URL = f"{BASE_URL}/account/login"
+
+# Session cache — avoid logging in again for every scraper instance.
+# A cached session is reused for SESSION_TTL_SECONDS; after that (or when
+# a request reveals the session expired), a fresh "verification" login is
+# performed and the cache is refreshed.
+SESSION_TTL_SECONDS = 20 * 60  # 20 minut
+
+_session_cache: dict[str, dict] = {}
+_session_lock = threading.Lock()
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -100,8 +110,27 @@ class HiyoriScraper:
                         f"Hiyori.cz: přihlášení selhalo pro '{self.username}'"
                     )
             # Persist cookies
-            self._cookies = dict(c.cookies)
+            self._cookies = {ck.name: ck.value for ck in c.cookies.jar}
+            with _session_lock:
+                _session_cache[self.username] = {
+                    "cookies": dict(self._cookies),
+                    "ts": time.monotonic(),
+                }
             log.info("Hiyori: přihlášení OK")
+
+    def _ensure_logged_in(self, verify: bool = False) -> None:
+        """Reuse a cached session (<SESSION_TTL_SECONDS old) if available,
+        otherwise perform a fresh login and refresh the cache.
+
+        verify=True forces a fresh "verification" login regardless of the
+        cache age (used when a request reveals the session expired)."""
+        if not verify:
+            with _session_lock:
+                cached = _session_cache.get(self.username)
+                if cached and (time.monotonic() - cached["ts"]) < SESSION_TTL_SECONDS:
+                    self._cookies = dict(cached["cookies"])
+                    return
+        self._login_or_raise()
 
     # ── Search ────────────────────────────────────────────────────────
 
@@ -120,8 +149,7 @@ class HiyoriScraper:
         if episode is None:
             return []
 
-        if not self._cookies:
-            self.login()
+        self._ensure_logged_in()
 
         with self._make_client() as c:
             _log(f"autocomplete '{title}'...")
@@ -152,7 +180,7 @@ class HiyoriScraper:
                 try:
                     time.sleep(1)  # polite delay between anime page fetches
                     rows = self._parse_subtitle_table(c, anime_id)
-                    matching = self._filter_rows(rows, episode)
+                    matching = self._filter_rows(rows, episode, season)
                     for row in matching:
                         results.extend(self._row_to_results(row))
                     if results:
@@ -160,14 +188,93 @@ class HiyoriScraper:
                 except Exception as e:
                     _log(f"chyba: {e}")
 
+            # Preferuj titulky v požadovaném jazyce (cs) před ostatními (např. sk)
+            results.sort(key=lambda r: r.get("language") != language)
+
             _log(f"nalezeno {len(results)} titulků")
             return results
+
+    # ── Audit Logic 4: planned / in-progress / revived check ────────────
+
+    def check_planned_or_revived(self, title: str, keywords: list[str] | None = None) -> dict:
+        """
+        Check whether *title* appears on hiyori.cz as planned / in-progress /
+        revived — i.e. the fansub team intends to or is currently working on
+        subtitles for it, as opposed to the title only existing with old,
+        finished subtitles (or not existing at all).
+
+        Used by the audit system (Logic 4) before assigning the ABANDONED
+        state: if planned/in-progress, PENDING_TRANSLATION is assigned
+        instead.
+
+        Returns:
+            {"found": bool, "anime_id": int|None, "title": str|None,
+             "planned": bool, "matched_keyword": str|None, "url": str|None}
+
+        Does not require login — uses the public autocomplete + anime page.
+        """
+        if keywords is None:
+            keywords = [
+                "připravujeme", "pripravujeme", "chystáme", "chystame",
+                "rozjíždíme", "rozjizdime", "rozjedeme",
+                "probíhá", "probiha", "probíhající", "probihajici",
+                "v překladu", "v prekladu", "překládáme", "prekladame",
+                "coming soon", "in progress", "upcoming",
+                "plánujeme", "planujeme", "naplánováno", "naplanovano",
+            ]
+
+        out = {
+            "found": False, "anime_id": None, "title": None,
+            "planned": False, "matched_keyword": None, "url": None,
+        }
+
+        with self._make_client() as c:
+            try:
+                r = self._get(
+                    c, f"{BASE_URL}/search/search",
+                    params={"nazev": title},
+                    headers={"Accept": "application/json"},
+                )
+                r.raise_for_status()
+                candidates = r.json() if r.content else []
+            except Exception as e:
+                log.warning("Hiyori check_planned_or_revived: autocomplete chyba: %s", e)
+                return out
+
+            if not candidates:
+                return out
+
+            item = candidates[0]
+            anime_id = item.get("id_anime")
+            if not anime_id:
+                return out
+
+            out["found"]    = True
+            out["anime_id"] = anime_id
+            out["title"]    = item.get("jmeno_orig") or item.get("jmeno")
+            out["url"]      = f"{BASE_URL}/anime/{anime_id}"
+
+            try:
+                time.sleep(1)  # polite delay before detail fetch
+                r2 = self._get(c, out["url"])
+                r2.raise_for_status()
+                page_text = r2.text.lower()
+            except Exception as e:
+                log.warning("Hiyori check_planned_or_revived: detail chyba: %s", e)
+                return out
+
+            for kw in keywords:
+                if kw.lower() in page_text:
+                    out["planned"]         = True
+                    out["matched_keyword"] = kw
+                    break
+
+        return out
 
     # ── Download ──────────────────────────────────────────────────────
 
     def download(self, url: str) -> bytes:
-        if not self._cookies:
-            self.login()
+        self._ensure_logged_in()
         with self._make_client() as c:
             time.sleep(1)
             r = self._get(c, url)
@@ -177,14 +284,16 @@ class HiyoriScraper:
                 soup = BeautifulSoup(r.text, "html.parser")
                 if soup.find("form", {"action": re.compile(r"/account/login", re.I)}):
                     self._cookies = {}
-                    self.login()
+                    self._ensure_logged_in(verify=True)
                     time.sleep(1)
                     with self._make_client() as c2:
                         r = self._get(c2, url)
                         r.raise_for_status()
                         ct = r.headers.get("content-type", "")
                         if "text/html" in ct:
-                            raise PermissionError("Hiyori.cz: session expirovala")
+                            raise PermissionError(
+                                "Hiyori: přihlášení selhalo — zkontroluj credentials v Nastavení → Indexery"
+                            )
                         return r.content
                 dl = (
                     soup.find("a", href=re.compile(r"\.(srt|zip|ass|ssa)($|\?)", re.I))
@@ -206,7 +315,7 @@ class HiyoriScraper:
     def _parse_subtitle_table(self, c: httpx.Client, anime_id: int) -> list[dict]:
         r = self._get(c, f"{BASE_URL}/anime/{anime_id}")
         r.raise_for_status()
-        soup  = BeautifulSoup(r.text, "html.parser")
+        soup = BeautifulSoup(r.text, "html.parser")
         table = soup.find("table", {"id": "AnimeSubs"})
         if not table:
             return []
@@ -240,21 +349,28 @@ class HiyoriScraper:
             rows.append(row)
         return rows
 
-    def _filter_rows(self, rows: list[dict], episode: int) -> list[dict]:
+    def _filter_rows(self, rows: list[dict], episode: int, season: int | None = None) -> list[dict]:
         matching = []
+        ova_matching = []  # OVA rows that match — lower priority for regular episodes
         for row in rows:
             id_dil = row.get("id_dil", "").strip()
             nazev  = row.get("nazev", "").lower()
             is_whole = ("celá" in nazev or "cela" in nazev or "serie" in nazev
                         or "seri" in nazev or id_dil in ("", "0"))
+            is_ova = "ova" in nazev
             ep_match = False
             try:
                 ep_match = (int(id_dil) == episode)
             except (ValueError, TypeError):
                 pass
             if ep_match or is_whole:
-                matching.append(row)
-        return matching or rows
+                # Deprioritize OVA rows when searching for a regular episode (season > 0)
+                if is_ova and season and season > 0:
+                    ova_matching.append(row)
+                else:
+                    matching.append(row)
+        # Regular matches first; OVA-only matches only if nothing else found
+        return matching or ova_matching or rows
 
     def _row_to_results(self, row: dict) -> list[dict]:
         results = []
@@ -301,3 +417,11 @@ class HiyoriScraper:
                 "notes":    row.get("pridano", ""),
             })
         return results
+
+    def _login_or_raise(self):
+        try:
+            self.login()
+        except PermissionError:
+            raise PermissionError(
+                "Hiyori: přihlášení selhalo — zkontroluj credentials v Nastavení → Indexery"
+            )

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { getSeries, getDownloadsQueue, getDownloadsRecent } from '../api/client';
+import { getSeries, getDownloadsQueue, getDownloadsRecent, getAppSettings } from '../api/client';
 import api from '../api/client';
 import {
   THEME, btnGhost, btnPrimary, btnSub,
@@ -9,10 +9,10 @@ import {
 } from '../v1design';
 
 const T = THEME;
-const getCalWeek = () => {
+const getCalWeek = (daysAhead = 7) => {
   const now = new Date();
   const start = now.toISOString().slice(0, 10);
-  const end = new Date(now.getTime() + 7 * 86400000).toISOString().slice(0, 10);
+  const end = new Date(now.getTime() + daysAhead * 86400000).toISOString().slice(0, 10);
   return api.get(`/calendar?start=${start}&end=${end}`).then(r => r.data);
 };
 
@@ -56,9 +56,16 @@ export default function Schedule({ theme }) {
   const queue = Array.isArray(rawQueue) ? rawQueue : (rawQueue?.items || []);
   const recent = Array.isArray(rawRecent) ? rawRecent : (rawRecent?.items || []);
 
+  const { data: appSettings = {} } = useQuery({
+    queryKey: ['app-settings'],
+    queryFn: () => getAppSettings().then(r => r.data ?? r),
+  });
+  const daysAhead = parseInt(appSettings.schedule_days_ahead || '7', 10);
+
   const { data: calItems = [] } = useQuery({
-    queryKey: ['cal-week'],
-    queryFn: getCalWeek,
+    queryKey: ['cal-week', daysAhead],
+    queryFn: () => getCalWeek(daysAhead),
+    enabled: true,
   });
 
   const { data: seriesList = [] } = useQuery({
@@ -75,9 +82,9 @@ export default function Schedule({ theme }) {
     byDate[d].push(item);
   }
 
-  // Build week days
+  // Build schedule days
   const today = new Date();
-  const weekDays = Array.from({ length: 7 }, (_, i) => {
+  const weekDays = Array.from({ length: daysAhead }, (_, i) => {
     const d = new Date(today);
     d.setDate(today.getDate() + i);
     return d.toISOString().slice(0, 10);
@@ -96,7 +103,7 @@ export default function Schedule({ theme }) {
         </>}
       />
 
-      <div style={{flex:1,overflowY:'auto',padding:'18px 24px',display:'flex',flexDirection:'column',gap:18}}>
+      <div style={{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',padding:'18px 24px',display:'flex',flexDirection:'column',gap:18}}>
         {/* Stats */}
         <div style={{display:'flex',gap:10}}>
           <StatCard theme={T} label="Stahuje se" value={downloading.length || '0'} sub={totalSpeed > 0 ? `${totalSpeed.toFixed(1)} MB/s` : 'žádné aktivní'} accent={T.accent}/>

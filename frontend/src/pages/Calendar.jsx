@@ -97,21 +97,18 @@ export default function Calendar({ theme }) {
               style={{...btnGhost(T),padding:'4px 8px',border:'none'}}>›</button>
           </div>
           <div style={{display:'flex',background:T.panel2,padding:2,borderRadius:8,border:`1px solid ${T.border}`}}>
-            {['Měsíc','Týden','Agenda'].map((v, i) => (
-              <button key={v} style={{
-                padding:'4px 10px',borderRadius:6,border:'none',cursor:'pointer',
-                background:i===0 ? T.panel : 'transparent',
-                color:i===0 ? T.accent : T.textDim,
-                font:'600 11px "Space Grotesk"',
-              }}>{v}</button>
-            ))}
+            <button style={{
+              padding:'4px 10px',borderRadius:6,border:'none',cursor:'default',
+              background:T.panel, color:T.accent,
+              font:'600 11px "Space Grotesk"',
+            }}>Měsíc</button>
           </div>
           <button onClick={() => setViewMonth(new Date(today.getFullYear(), today.getMonth(), 1))}
             style={btnGhost(T)}>Dnes</button>
         </>}
       />
 
-      <div style={{flex:1,overflowY:'auto',padding:'18px 24px',display:'flex',flexDirection:'column',gap:8}}>
+      <div style={{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',padding:'18px 24px',display:'flex',flexDirection:'column',gap:8}}>
         {/* Weekday header */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(7, 1fr)',gap:6}}>
           {DAY_NAMES.map(d => (
@@ -148,8 +145,8 @@ export default function Calendar({ theme }) {
                     )}
                     {drops.slice(0, 3).map((drop, i) => {
                       const s = seriesList.find(x => x.id === (drop.series_id || drop.seriesId)) || {};
-                      const hue = strHue(s.title_romaji || s.title || drop.series_title || '');
-                      const title = s.title_romaji || s.title || drop.series_title || '—';
+                      const hue = strHue(s.title_english || s.title_romaji || s.title || drop.series_title || '');
+                      const title = s.title_english || s.title_romaji || s.title || drop.series_title || '—';
                       return (
                         <div key={i} onClick={() => navigate(`/series/${s.id || drop.series_id || drop.seriesId}`)} style={{
                           display:'flex',alignItems:'center',gap:5,

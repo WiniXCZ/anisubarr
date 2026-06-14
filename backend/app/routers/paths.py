@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/paths", tags=["paths"])
 
 @router.get("/config")
 def get_path_config(_: User = Depends(get_current_user)):
-    """Vrátí aktuální konfiguraci path mappingu včetně stavu Sonarr, Overseerr a Emby."""
+    """Vrátí aktuální konfiguraci path mappingu včetně stavu Sonarr, Seerr a Emby."""
     cfg = get_settings()
     return {
         # Základní path info
@@ -37,9 +37,9 @@ def get_path_config(_: User = Depends(get_current_user)):
         "sonarr_host":        cfg.sonarr_host,
         "sonarr_configured":  bool(cfg.sonarr_host and cfg.sonarr_api_key),
 
-        # Overseerr / Jellyseerr
-        "overseerr_host":        cfg.overseerr_host,
-        "overseerr_configured":  bool(cfg.overseerr_host and cfg.overseerr_api_key),
+        # Seerr
+        "seerr_host":        cfg.seerr_host,
+        "seerr_configured":  bool(cfg.seerr_host and cfg.seerr_api_key),
 
         # Emby / Jellyfin
         "emby_host":         cfg.emby_host,

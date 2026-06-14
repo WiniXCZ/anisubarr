@@ -43,12 +43,39 @@ def _human(b: int) -> str:
     return f"{b:.1f} PB"
 
 
+def _norm(p: str) -> str:
+    return os.path.normcase(os.path.normpath(p))
+
+
+def _allowed_roots(settings) -> list[str]:
+    """Return normalized, locally-resolved roots that /browse may access."""
+    roots: list[str] = []
+    for raw in (settings.media_root, settings.path_local_prefix):
+        if not raw:
+            continue
+        try:
+            local = path_resolver.unc_to_local(raw)
+        except Exception:
+            local = raw
+        for candidate in (raw, local):
+            norm = _norm(candidate)
+            if norm not in roots:
+                roots.append(norm)
+    return roots
+
+
+def _is_within_roots(path: str, roots: list[str]) -> bool:
+    norm = _norm(path)
+    return any(norm == root or norm.startswith(root + os.sep) for root in roots)
+
+
 @router.get("/browse")
 def browse(
     path: str = Query("", description="Absolute path to browse"),
     _: User = Depends(get_current_user),
 ):
     settings = get_settings()
+    roots = _allowed_roots(settings)
 
     # Determine root: prefer explicit path, else media_root or local_prefix
     if not path:
@@ -56,6 +83,14 @@ def browse(
         if not root:
             return {"path": "", "entries": [], "error": "media_root not configured"}
         path = root
+
+    if not roots:
+        raise HTTPException(403, "media_root / path_local_prefix not configured — browsing disabled")
+
+    # Reject paths that aren't (yet) within an allowed root, before any
+    # SMB mapping / filesystem access happens.
+    if not (_is_within_roots(path, roots) or _is_within_roots(path_resolver.unc_to_local(path), roots)):
+        raise HTTPException(403, "Path is outside of the configured media root")
 
     # Ensure SMB share is authenticated & mapped (no-op on Linux or non-UNC paths)
     try:
@@ -65,6 +100,9 @@ def browse(
 
     # Translate UNC path (\\server\share\...) → drive letter (Y:\...) on Windows
     path = path_resolver.unc_to_local(path)
+
+    if not _is_within_roots(path, roots):
+        raise HTTPException(403, "Path is outside of the configured media root")
 
     if not os.path.exists(path):
         raise HTTPException(404, f"Path not found: {path}")

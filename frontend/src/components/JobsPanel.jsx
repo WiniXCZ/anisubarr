@@ -239,6 +239,11 @@ export default function JobsPanel({ open, onClose }) {
           "flex flex-col transition-transform duration-300 ease-in-out",
           open ? "translate-x-0" : "translate-x-full"
         )}
+        style={{
+          width: 320,
+          transform: open ? 'translateX(0)' : 'translateX(100%)',
+          pointerEvents: open ? 'all' : 'none',
+        }}
       >
         {/* Hlavička */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">

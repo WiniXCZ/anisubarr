@@ -3,10 +3,13 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    emptyOutDir: false,
+  },
   server: {
-    host: true,           // listen on 0.0.0.0 — přístupné z lokální sítě
+    host: true,
     port: 5173,
-    allowedHosts: "all",  // povolí přístup z externích IP (bez tohoto Vite 5 blokuje)
+    allowedHosts: "all",
     proxy: {
       "/api": {
         target: "http://localhost:8000",

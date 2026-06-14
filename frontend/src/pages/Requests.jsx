@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getRequests, createRequest, updateRequest, deleteRequest,
-  overseerrRequests, overseerrStatus, overseerrApprove, overseerrDecline, overseerrCancelReq,
+  seerrRequests, seerrStatus, seerrApprove, seerrDecline, seerrCancelReq,
 } from '../api/client';
 import { useToast } from '../context/ToastContext';
 import {
@@ -71,7 +71,7 @@ function NewRequestModal({ theme, onClose, onCreate }) {
 }
 
 export default function Requests({ theme }) {
-  const [tab, setTab] = useState('overseerr');
+  const [tab, setTab] = useState('seerr');
   const [showModal, setShowModal] = useState(false);
   const qc = useQueryClient();
   const toast = useToast();
@@ -81,15 +81,22 @@ export default function Requests({ theme }) {
     queryFn: () => getRequests().then(r => r.data ?? r),
   });
 
-  const { data: overseerrData } = useQuery({
-    queryKey: ['overseerr-requests', tab],
-    queryFn: () => overseerrRequests(tab === 'pending' ? 'pending' : tab === 'approved' ? 'approved' : 'declined')
-      .then(r => r.data?.results ?? []),
+  const { data: seerrData, isLoading: seerrLoading } = useQuery({
+    queryKey: ['seerr-requests'],
+    queryFn: async () => {
+      const r = await seerrRequests('all');
+      const d = r.data;
+      // Handle both {results:[...]} and plain array responses
+      return Array.isArray(d) ? d : (d?.results ?? []);
+    },
+    staleTime: 5 * 60 * 1000,   // 5 minut — data jsou cachovaná backendem, není nutné fetcho každý mount
+    refetchOnMount: 'always',
+    retry: 1,
   });
 
-  const { data: overseerrStatusData } = useQuery({
-    queryKey: ['overseerr-status'],
-    queryFn: () => overseerrStatus().then(r => r.data ?? r),
+  const { data: seerrStatusData } = useQuery({
+    queryKey: ['seerr-status'],
+    queryFn: () => seerrStatus().then(r => r.data ?? r),
   });
 
   const createMutation = useMutation({
@@ -111,23 +118,22 @@ export default function Requests({ theme }) {
   });
 
   const approveMutation = useMutation({
-    mutationFn: (id) => overseerrApprove(id),
-    onSuccess: () => { qc.invalidateQueries(['overseerr-requests']); toast.success('Žádost schválena'); },
+    mutationFn: (id) => seerrApprove(id),
+    onSuccess: () => { qc.invalidateQueries(['seerr-requests']); toast.success('Žádost schválena'); },
     onError: () => toast.error('Chyba při schvalování'),
   });
 
   const declineMutation = useMutation({
-    mutationFn: (id) => overseerrDecline(id),
-    onSuccess: () => { qc.invalidateQueries(['overseerr-requests']); toast.success('Žádost zamítnuta'); },
+    mutationFn: (id) => seerrDecline(id),
+    onSuccess: () => { qc.invalidateQueries(['seerr-requests']); toast.success('Žádost zamítnuta'); },
     onError: () => toast.error('Chyba při zamítání'),
   });
 
   const cancelMutation = useMutation({
-    mutationFn: (id) => overseerrCancelReq(id),
-    onSuccess: () => { qc.invalidateQueries(['overseerr-requests']); toast.success('Žádost zrušena'); },
+    mutationFn: (id) => seerrCancelReq(id),
+    onSuccess: () => { qc.invalidateQueries(['seerr-requests']); toast.success('Žádost zrušena'); },
   });
 
-  // Combine local + overseerr requests
   const allReqs = localReqs;
 
   const counts = {
@@ -136,10 +142,10 @@ export default function Requests({ theme }) {
     rejected: allReqs.filter(r => r.status === 'rejected' || r.status === 'declined').length,
   };
 
-  const overseerrCount = overseerrData?.length || 0;
+  const seerrCount = seerrData?.length || 0;
 
-  const list = tab === 'overseerr'
-    ? (overseerrData || [])
+  const list = tab === 'seerr'
+    ? (seerrData || [])
     : allReqs.filter(r => {
         if (tab === 'pending') return r.status === 'pending';
         if (tab === 'approved') return r.status === 'approved';
@@ -155,20 +161,19 @@ export default function Requests({ theme }) {
       )}
 
       <PageHeader theme={T} title="Žádosti"
-        subtitle="Požadavky od uživatelů a integrace Overseerr"
+        subtitle="Požadavky od uživatelů a integrace Seerr"
         right={<>
-          <button style={btnSub(T)}>⚙ Pravidla auto-schválení</button>
           <button onClick={() => setShowModal(true)} style={btnPrimary(T)}>+ Nová žádost</button>
         </>}
       />
 
-      <div style={{flex:1,overflowY:'auto',padding:'18px 24px',display:'flex',flexDirection:'column',gap:18}}>
+      <div style={{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',padding:'18px 24px',display:'flex',flexDirection:'column',gap:18}}>
         {/* Stats */}
         <div style={{display:'flex',gap:10}}>
           <StatCard theme={T} label="Čeká" value={counts.pending} sub="vyžaduje schválení" accent={T.statusUpcoming}/>
           <StatCard theme={T} label="Schváleno" value={counts.approved} sub="přidáno do knihovny" accent={T.statusDone}/>
           <StatCard theme={T} label="Zamítnuto" value={counts.rejected} sub="nedostupné / mimo profil" accent={T.statusEnded}/>
-          <StatCard theme={T} label="Overseerr" value={overseerrCount} sub="žádosti z Overseerr" accent={T.accent}/>
+          <StatCard theme={T} label="Seerr" value={seerrCount} sub="žádosti ze Seerr" accent={T.accent}/>
         </div>
 
         {/* Tabs */}
@@ -176,7 +181,7 @@ export default function Requests({ theme }) {
           <FilterPill theme={T} label="Čekající"  active={tab==='pending'}   count={counts.pending}   onClick={() => setTab('pending')}/>
           <FilterPill theme={T} label="Schválené" active={tab==='approved'}  count={counts.approved}  onClick={() => setTab('approved')}/>
           <FilterPill theme={T} label="Zamítnuté" active={tab==='rejected'}  count={counts.rejected}  onClick={() => setTab('rejected')}/>
-          <FilterPill theme={T} label="Overseerr" active={tab==='overseerr'} count={overseerrCount}   onClick={() => setTab('overseerr')}/>
+          <FilterPill theme={T} label="Seerr" active={tab==='seerr'} count={seerrCount}   onClick={() => setTab('seerr')}/>
         </div>
 
         {/* Request list */}
@@ -188,13 +193,20 @@ export default function Requests({ theme }) {
             </div>
           )}
 
-          {tab === 'overseerr' && overseerrStatusData?.connected === false && (
+          {tab === 'seerr' && seerrStatusData?.connected === false && (
             <div style={{padding:24,background:T.panel,border:`1px dashed ${T.border}`,borderRadius:10,textAlign:'center',color:T.textDim}}>
-              Overseerr není připojen. Nastav OVERSEERR_HOST a OVERSEERR_API_KEY v Nastavení.
+              Seerr není připojen. Nastav SEERR_HOST a SEERR_API_KEY v Nastavení.
             </div>
           )}
 
-          {tab === 'overseerr' ? (
+          {tab === 'seerr' && seerrLoading && !seerrData && (
+            <div style={{padding:24,background:T.panel,border:`1px dashed ${T.border}`,
+              borderRadius:10,textAlign:'center',color:T.textMute,font:'500 13px "Space Grotesk"'}}>
+              Načítám žádosti ze Seerr…
+            </div>
+          )}
+
+          {tab === 'seerr' ? (
             list.map((req, idx) => {
               const title = req.media?.title || req.media?.name || req.title || '—';
               const user = req.requestedBy?.displayName || req.requestedBy?.username || '—';
@@ -206,47 +218,54 @@ export default function Requests({ theme }) {
               const isPending = status === 1;
               return (
                 <div key={req.id || idx} style={{
-                  display:'grid', gridTemplateColumns:'48px 1fr auto',
-                  gap:14, padding:14, background:T.panel,
-                  border:`1px solid ${T.border}`, borderRadius:10, alignItems:'flex-start',
+                  display:'flex', flexDirection:'column',
+                  gap:10, padding:14, background:T.panel,
+                  border:`1px solid ${T.border}`, borderRadius:10,
                 }}>
-                  <AnimePosterSmall title={title} coverUrl={coverUrl} hue={h}/>
-                  <div style={{minWidth:0,display:'flex',flexDirection:'column',gap:5}}>
-                    <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-                      <div style={{font:'600 14px "Space Grotesk"',color:T.text}}>{title}</div>
-                      <span style={{font:'500 10px JetBrains Mono',color:T.textMute,
-                        background:T.panel2,padding:'2px 7px',borderRadius:99,
-                        border:`1px solid ${T.border}`}}>Overseerr</span>
-                    </div>
-                    <div style={{font:'500 11px JetBrains Mono',color:T.textDim}}>
-                      od <span style={{color:T.text}}>@{user}</span>
+                  {/* Poster + info */}
+                  <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
+                    <AnimePosterSmall title={title} coverUrl={coverUrl} hue={h}/>
+                    <div style={{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:4}}>
+                      <div style={{font:'600 14px "Space Grotesk"',color:T.text,
+                        wordBreak:'break-word',overflowWrap:'break-word',lineHeight:1.4}}>
+                        {title}
+                      </div>
+                      <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                        <span style={{font:'500 10px JetBrains Mono',color:T.textMute,
+                          background:T.panel2,padding:'2px 7px',borderRadius:99,
+                          border:`1px solid ${T.border}`}}>Seerr</span>
+                        <StatusPill theme={T} color={statusColor} label={statusLabel} size="sm"/>
+                      </div>
+                      <div style={{font:'500 11px JetBrains Mono',color:T.textDim}}>
+                        od <span style={{color:T.text}}>@{user}</span>
+                      </div>
                     </div>
                   </div>
-                  <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}>
-                    <StatusPill theme={T} color={statusColor} label={statusLabel} size="sm"/>
-                    {isPending && <>
+                  {/* Action buttons */}
+                  {isPending && (
+                    <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
                       <button
                         onClick={() => declineMutation.mutate(req.id)}
                         disabled={declineMutation.isPending}
-                        style={{...btnGhost(T),padding:'5px 10px',fontSize:11}}>
+                        style={{...btnGhost(T),padding:'7px 14px',fontSize:12,flex:1}}>
                         ✕ Zamítnout
                       </button>
                       <button
                         onClick={() => approveMutation.mutate(req.id)}
                         disabled={approveMutation.isPending}
-                        style={{...btnPrimary(T),padding:'5px 10px',fontSize:11}}>
+                        style={{...btnPrimary(T),padding:'7px 14px',fontSize:12,flex:1}}>
                         ✓ Schválit
                       </button>
-                    </>}
-                    {!isPending && (
-                      <button
-                        onClick={() => cancelMutation.mutate(req.id)}
-                        disabled={cancelMutation.isPending}
-                        style={{...btnGhost(T),padding:'5px 8px',fontSize:11}}>
-                        ✕
-                      </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
+                  {!isPending && (
+                    <button
+                      onClick={() => cancelMutation.mutate(req.id)}
+                      disabled={cancelMutation.isPending}
+                      style={{...btnGhost(T),padding:'5px 8px',fontSize:11,alignSelf:'flex-end'}}>
+                      ✕ Zrušit
+                    </button>
+                  )}
                 </div>
               );
             })
@@ -291,7 +310,6 @@ export default function Requests({ theme }) {
                     </>}
                     {req.status === 'approved' && <>
                       <StatusPill theme={T} color={T.statusDone} label="Schváleno" size="sm"/>
-                      <button style={{...btnGhost(T),padding:'6px 10px',fontSize:11}}>Zobrazit</button>
                     </>}
                     {(req.status === 'rejected' || req.status === 'declined') && <>
                       <StatusPill theme={T} color={T.statusEnded} label="Zamítnuto" size="sm"/>

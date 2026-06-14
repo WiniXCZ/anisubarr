@@ -12,68 +12,12 @@ Logic (three levels):
 from __future__ import annotations
 
 import logging
-import os
 from collections import defaultdict
 from typing import Optional
 
 log = logging.getLogger("anisubarr.auto_unmonitor")
 
-# -- re-use the same CS detection constants as series.py -------------------------
-_CS_LANGS  = {"cs", "cze", "cz", "ces"}
-_CS_NAMES  = _CS_LANGS | {"czech", "cestina", "češtiny", "čeština"}
-
-
-def _has_cs_sub(ep, dir_cache: dict) -> bool:
-    """Return True if the episode has a Czech subtitle on disk or in DB."""
-    from ..services import path_resolver
-
-    # 1) DB subtitle records
-    for sub in ep.subtitles:
-        if sub.language in _CS_LANGS:
-            return True
-
-    # 2) Embedded tracks from Sonarr mediaInfo
-    if ep.subtitles_in_file:
-        for token in ep.subtitles_in_file.replace("\", ",").split(","):
-            if token.strip().lower() in _CS_NAMES:
-                return True
-
-    # 3) External .srt/.ass files on disk
-    if not ep.file_path:
-        return False
-    try:
-        unc_video   = path_resolver.resolve(ep.file_path)
-        local_video = path_resolver.unc_to_local(unc_video)
-
-        directories: list[str] = []
-        for vid in ([local_video] if local_video != unc_video else []) + [unc_video]:
-            d = os.path.dirname(vid)
-            if d and d not in directories:
-                directories.append(d)
-
-        video_stem = os.path.splitext(os.path.basename(local_video))[0].lower()
-
-        for directory in directories:
-            if directory not in dir_cache:
-                try:
-                    dir_cache[directory] = {f.lower() for f in os.listdir(directory)} if os.path.isdir(directory) else set()
-                except Exception:
-                    dir_cache[directory] = set()
-
-            filenames = dir_cache[directory]
-            for lang in _CS_LANGS:
-                for ext in ("srt", "ass", "ssa", "vtt"):
-                    candidate = f"{video_stem}.{lang}.{ext}"
-                    if candidate in filenames:
-                        full_path = os.path.join(directory, candidate)
-                        try:
-                            if os.path.isfile(full_path) and os.path.getsize(full_path) >= 10:
-                                return True
-                        except Exception:
-                            return True
-    except Exception:
-        pass
-    return False
+from ..utils import has_cs_sub  # noqa: E402
 
 
 def run_auto_unmonitor(
@@ -132,7 +76,7 @@ def run_auto_unmonitor(
         no_cs_ep_ids: list[int] = []  # episodes with file but no CS sub
 
         for ep in eps_with_file:
-            if _has_cs_sub(ep, dir_cache):
+            if has_cs_sub(ep, dir_cache):
                 if ep.sonarr_ep_id:
                     cs_ep_ids.append(ep.sonarr_ep_id)
                 cs_ep_db.append(ep)

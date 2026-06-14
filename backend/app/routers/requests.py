@@ -119,16 +119,26 @@ def update_request(
     req_id: int,
     body: RequestUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     req = db.query(AnimeRequest).filter(AnimeRequest.id == req_id).first()
     if not req:
         raise HTTPException(404, "Request not found")
+
+    is_owner = req.user_id == current_user.id
+    is_admin = bool(current_user.is_admin) or (current_user.role == "admin")
+
     if body.status is not None:
         if body.status not in _VALID_STATUSES:
             raise HTTPException(400, f"Invalid status. Use: {_VALID_STATUSES}")
+        if body.status in ("approved", "rejected") and not is_admin:
+            raise HTTPException(403, "Only admins can approve or reject requests")
+        if not is_admin and not is_owner:
+            raise HTTPException(403, "Not allowed to modify this request")
         req.status = body.status
     if body.note is not None:
+        if not is_admin and not is_owner:
+            raise HTTPException(403, "Not allowed to modify this request")
         req.note = body.note
     db.commit()
     db.refresh(req)

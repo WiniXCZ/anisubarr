@@ -98,15 +98,25 @@ class KamuiScraper:
             r2.raise_for_status()
             soup2 = BeautifulSoup(r2.text, "html.parser")
 
-            # Find the login form
-            form = soup2.find("form")
+            def _find_login_form(soup: BeautifulSoup):
+                """Return the first form that contains a password input field."""
+                for candidate in soup.find_all("form"):
+                    if any(
+                        inp.get("type", "").lower() == "password"
+                        for inp in candidate.find_all("input")
+                    ):
+                        return candidate
+                return None
+
+            # Find the login form — must contain a password field
+            form = _find_login_form(soup2)
             if not form:
                 # Try alternate login endpoints
                 for path in ["/prihlaseni", "/user/login", "/account/login", "/auth/login"]:
                     r3 = self._get(c, BASE_URL + path)
                     if r3.status_code == 200:
                         soup3 = BeautifulSoup(r3.text, "html.parser")
-                        form = soup3.find("form")
+                        form = _find_login_form(soup3)
                         if form:
                             r2 = r3
                             soup2 = soup3
@@ -133,6 +143,33 @@ class KamuiScraper:
                 elif typ in ("text", "email") or any(k in name_l for k in ("user", "email", "login", "name")):
                     if user_field is None:
                         user_field = name
+
+            # Fallback: if user field wasn't identified by name patterns,
+            # use the first non-password, non-hidden input in the form
+            if not user_field:
+                for inp in form.find_all("input"):
+                    name = inp.get("name", "").strip()
+                    typ  = inp.get("type", "text").lower()
+                    if name and name in payload and typ not in (
+                        "password", "hidden", "submit", "button",
+                        "image", "reset", "checkbox", "radio",
+                    ):
+                        user_field = name
+                        log.debug("Kamui: záložní username pole '%s'", name)
+                        break
+
+            # Fallback: find any named password input in the form that the main
+            # loop may have missed (e.g., inconsistent type-attribute defaults)
+            if not pass_field:
+                for inp in form.find_all("input"):
+                    if inp.get("type", "").lower() == "password":
+                        n = inp.get("name", "").strip()
+                        if n:
+                            pass_field = n
+                            if n not in payload:
+                                payload[n] = ""
+                            log.debug("Kamui: záložní password pole '%s'", n)
+                        break
 
             if not user_field or not pass_field:
                 log.error("Kamui: nalezená pole: %s", list(payload.keys()))
@@ -277,7 +314,6 @@ class KamuiScraper:
 
         ep_str     = str(episode)
         ep_padded  = f"{episode:02d}"
-        season_str = str(season) if season else None
 
         # Look for links mentioning this episode
         for a in soup.find_all("a", href=True):
@@ -295,10 +331,6 @@ class KamuiScraper:
             )
             if not ep_match:
                 continue
-
-            if season_str and f"S{int(season_str):02d}" not in text and f"série {season_str}" not in text.lower():
-                # For multi-season shows, try to match season too
-                pass  # still include — may be right
 
             full_url = urljoin(BASE_URL, href)
             _log(f"nalezena epizoda: {full_url}")
@@ -378,14 +410,14 @@ class KamuiScraper:
 
     # ── Download ──────────────────────────────────────────────────────
 
-    def download(self, url: str) -> bytes:
+    def download(self, url: str, _retry: bool = False) -> bytes:
         """Download subtitle from URL, extract from RAR if needed.
 
         Returns plain subtitle bytes (SRT/ASS), NOT the raw RAR archive.
         The RAR password (self.rar_password) is applied automatically.
         """
         if not self._cookies:
-            self.login()
+            self._login_or_raise()
 
         with self._make_client() as c:
             time.sleep(1)
@@ -393,11 +425,16 @@ class KamuiScraper:
             r.raise_for_status()
 
             ct = r.headers.get("content-type", "")
-            if "text/html" in ct:
-                log.error("Kamui: download vrátil HTML místo souboru")
-                raise ValueError(
-                    "Kamui: server vrátil HTML místo souboru — "
-                    "session možná expirovala nebo URL je neplatná"
+            is_html = "text/html" in ct or r.content[:9].lower().startswith(b"<!doctype")
+            if is_html:
+                if not _retry:
+                    log.info("Kamui: session expirovala, přihlašuji se znovu...")
+                    self._cookies = {}
+                    self._login_or_raise()
+                    return self.download(url, _retry=True)
+                log.error("Kamui: download vrátil HTML i po re-loginu")
+                raise PermissionError(
+                    "Kamui: přihlášení selhalo — zkontroluj credentials v Nastavení → Indexery"
                 )
 
             raw = r.content
@@ -410,3 +447,11 @@ class KamuiScraper:
 
         # ZIP or plain text — return as-is (extract_subtitle_bytes handles it)
         return raw
+
+    def _login_or_raise(self):
+        try:
+            self.login()
+        except PermissionError:
+            raise PermissionError(
+                "Kamui: přihlášení selhalo — zkontroluj credentials v Nastavení → Indexery"
+            )

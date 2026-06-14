@@ -1,12 +1,12 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { login } from "../api/client";
 import { T } from "../theme";
 
 export default function Login() {
   const navigate = useNavigate();
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const usernameRef = useRef(null);
+  const passwordRef = useRef(null);
   const [error,    setError]    = useState("");
   const [loading,  setLoading]  = useState(false);
 
@@ -14,8 +14,12 @@ export default function Login() {
     e.preventDefault();
     setError("");
     setLoading(true);
+    // Read directly from DOM refs to capture browser-autofilled values
+    // that Chrome may not expose via React's synthetic onChange
+    const u = usernameRef.current?.value ?? "";
+    const p = passwordRef.current?.value ?? "";
     try {
-      const res = await login(username, password);
+      const res = await login(u, p);
       localStorage.setItem("token", res.data.access_token);
       navigate("/");
     } catch (err) {
@@ -34,7 +38,7 @@ export default function Login() {
 
   return (
     <div style={{
-      minHeight: '100vh', background: T.bg,
+      minHeight: '100dvh', background: T.bg,
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
     }}>
       <div style={{ width: '100%', maxWidth: 360 }}>
@@ -69,16 +73,16 @@ export default function Login() {
             <label style={{ font: '500 12px "Space Grotesk"', color: T.textDim }}>
               Uživatelské jméno
             </label>
-            <input type="text" value={username} onChange={e => setUsername(e.target.value)}
-              required autoFocus placeholder="admin" style={inp}/>
+            <input ref={usernameRef} type="text" name="username"
+              autoFocus autoComplete="username" placeholder="admin" style={inp}/>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <label style={{ font: '500 12px "Space Grotesk"', color: T.textDim }}>
               Heslo
             </label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-              required placeholder="••••••••" style={inp}/>
+            <input ref={passwordRef} type="password" name="password"
+              autoComplete="current-password" placeholder="••••••••" style={inp}/>
           </div>
 
           <button type="submit" disabled={loading} style={{

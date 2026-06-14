@@ -1,7 +1,12 @@
 """
 overseerr.py – Overseerr / Jellyseerr integration.
 
-Endpoints:
+DEPRECATED / DEAD CODE — tento soubor není importován v main.py ani nikde jinde.
+Veškerá funkčnost je zduplikována v seerr.py (router /api/seerr/*).
+Pokud plánuješ vrátit se k Overseerr místo Seerr, importuj tento router v main.py.
+Jinak tento soubor smaž, aby nepletl budoucí vývojáře.
+
+Endpoints (neaktivní):
   GET  /api/overseerr/status              → test connection + server info
   GET  /api/overseerr/requests            → list media requests
   POST /api/overseerr/request/{series_id} → request all seasons of a series
@@ -24,7 +29,7 @@ from ..database import get_db
 from ..deps import get_current_user
 from ..models.user import User
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("anisubarr.overseerr")
 
 router = APIRouter(prefix="/api/overseerr", tags=["overseerr"])
 

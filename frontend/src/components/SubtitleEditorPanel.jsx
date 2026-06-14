@@ -1,3 +1,4 @@
+// @deprecated — replaced by SubtitleEditorPage (full-page route). Not imported anywhere.
 /**
  * SubtitleEditorPanel — sliding panel for manual subtitle shifting and editing.
  * No audio analysis — purely manual offset in milliseconds.
@@ -149,7 +150,7 @@ export default function SubtitleEditorPanel({ open, onClose }) {
               >
                 <option value="">Vyber anime…</option>
                 {allSeries.map(s => (
-                  <option key={s.id} value={s.id}>{s.title_romaji || s.title}</option>
+                  <option key={s.id} value={s.id}>{s.title_english || s.title_romaji || s.title}</option>
                 ))}
               </select>
             </div>

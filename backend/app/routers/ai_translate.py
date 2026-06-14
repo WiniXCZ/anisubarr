@@ -1,13 +1,14 @@
 """
 ai_translate.py – AI-assisted subtitle translation endpoint.
 
-POST /api/ai/translate   → translate a batch of subtitle lines via Claude API
-GET  /api/ai/status      → check if AI translation is configured
+POST /api/ai/translate  → translate a batch of subtitle lines
+GET  /api/ai/status     → check which AI provider is configured
 """
 from __future__ import annotations
 
+import json
 import logging
-import os
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -23,20 +24,20 @@ log = logging.getLogger("anisubarr.ai_translate")
 router = APIRouter(prefix="/api/ai", tags=["ai-translate"])
 
 
-# ── Schemas ───────────────────────────────────────────────────────────────────
+# ── Schemas ────────────────────────────────────────────────────────────────────
 
 class TranslateLine(BaseModel):
     id: int
     jp: str
-    en: Optional[str] = None   # existing translation (for context)
+    en: Optional[str] = None
 
 
 class TranslateContext(BaseModel):
-    series_id:       Optional[int]   = None
-    series_title:    Optional[str]   = None
-    tone:            str             = "standard"   # soft / standard / formal
-    keep_honorifics: bool            = True
-    glossary:        list[dict]      = []            # [{jp, cs}, ...]
+    series_id:       Optional[int] = None
+    series_title:    Optional[str] = None
+    tone:            str           = "standard"   # soft / standard / formal
+    keep_honorifics: bool          = True
+    glossary:        list[dict]    = []            # [{jp, cs}, ...]
 
 
 class TranslateRequest(BaseModel):
@@ -56,19 +57,7 @@ class TranslateResponse(BaseModel):
     cached:       bool = False
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _get_api_key(db) -> Optional[str]:
-    """Read Anthropic API key from DB settings or environment."""
-    try:
-        from ..models.app_settings import AppSetting
-        row = db.query(AppSetting).filter(AppSetting.key == "anthropic_api_key").first()
-        if row and row.value:
-            return row.value
-    except Exception:
-        pass
-    return os.environ.get("ANTHROPIC_API_KEY")
-
+# ── Prompt builders ────────────────────────────────────────────────────────────
 
 def _build_glossary_prompt(glossary: list[dict]) -> str:
     if not glossary:
@@ -99,103 +88,21 @@ def _build_system_prompt(ctx: TranslateContext) -> str:
     )
 
 
-def _translate_with_claude(lines: list[TranslateLine], ctx: TranslateContext, api_key: str) -> TranslateResponse:
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=api_key)
-    model = "claude-haiku-4-5"
-
-    glossary_block = _build_glossary_prompt(ctx.glossary)
-    lines_text = "\n".join([f'{{"id":{l.id},"jp":"{l.jp}"}}' for l in lines])
-
-    user_msg = (
-        f"{glossary_block}"
-        f"Přelož tyto titulky do češtiny. Pro každý řádek vrať pole s polí id, cs (hlavní překlad), "
-        f"a alts (2 alternativní překlady). Vrať POUZE JSON pole bez dalšího textu.\n\n"
-        f"Řádky:\n{lines_text}\n\n"
-        f'Formát odpovědi: [{{"id":1,"cs":"překlad","alts":["alt1","alt2"]}},...]'
-    )
-
-    response = client.messages.create(
-        model=model,
-        max_tokens=2048,
-        system=_build_system_prompt(ctx),
-        messages=[{"role": "user", "content": user_msg}],
-    )
-
-    import json
-    content = response.content[0].text.strip()
-    # Strip markdown code fences if present
-    if content.startswith("```"):
-        content = re.sub(r"^```[a-z]*\n?", "", content, flags=re.MULTILINE)
-        content = content.rstrip("`").strip()
-
-    data = json.loads(content)
-    translations = [
-        TranslatedLine(id=item["id"], cs=item.get("cs", ""), alts=item.get("alts", []))
-        for item in data
-    ]
-    return TranslateResponse(translations=translations, model=model)
-
-
-def _translate_with_ollama(lines: list[TranslateLine], ctx: TranslateContext, host: str) -> TranslateResponse:
-    import httpx, json
-
-    glossary_block = _build_glossary_prompt(ctx.glossary)
-    lines_text = "\n".join([f"ID {l.id}: {l.jp}" for l in lines])
-
-    prompt = (
-        f"{_build_system_prompt(ctx)}\n\n"
-        f"{glossary_block}"
-        f"Přelož tyto titulky do češtiny. Vrať POUZE JSON pole.\n"
-        f"Formát: [{{\"id\":1,\"cs\":\"překlad\",\"alts\":[\"alt1\",\"alt2\"]}},...]\n\n"
-        f"Titulky:\n{lines_text}"
-    )
-
-    r = httpx.post(
-        f"{host}/api/generate",
-        json={"model": "llama3", "prompt": prompt, "stream": False},
-        timeout=120,
-    )
-    r.raise_for_status()
-    raw = r.json().get("response", "")
-    # Extract JSON array
-    match = re.search(r"\[.*\]", raw, re.DOTALL)
-    if not match:
-        raise HTTPException(502, "Ollama returned no JSON array")
-    data = json.loads(match.group(0))
-    translations = [
-        TranslatedLine(id=item["id"], cs=item.get("cs", ""), alts=item.get("alts", []))
-        for item in data
-    ]
-    return TranslateResponse(translations=translations, model="ollama/llama3")
-
-
-import re
-
-
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @router.get("/status")
 def ai_status(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    """Check which AI provider is configured."""
-    api_key = _get_api_key(db)
-    if api_key:
-        return {"provider": "claude", "model": "claude-haiku-4-5", "ready": True}
-
-    try:
-        from ..models.app_settings import AppSetting
-        row = db.query(AppSetting).filter(AppSetting.key == "ollama_host").first()
-        if row and row.value:
-            return {"provider": "ollama", "model": "llama3", "ready": True, "host": row.value}
-    except Exception:
-        pass
-
-    env_host = os.environ.get("OLLAMA_HOST")
-    if env_host:
-        return {"provider": "ollama", "model": "llama3", "ready": True, "host": env_host}
-
-    return {"provider": None, "ready": False, "message": "No AI provider configured. Set anthropic_api_key or ollama_host in Settings."}
+    """Return which AI provider is active and ready."""
+    from ..services.ai_provider import get_provider_config
+    cfg = get_provider_config(db)
+    provider = cfg.get("provider")
+    if provider:
+        return {"provider": provider, "model": cfg.get("model"), "ready": True}
+    return {
+        "provider": None,
+        "ready": False,
+        "message": "No AI provider configured. Set ai_translation_provider in Settings.",
+    }
 
 
 @router.post("/translate", response_model=TranslateResponse)
@@ -209,7 +116,7 @@ def translate_subtitles(
     if len(req.lines) > 100:
         raise HTTPException(400, "Maximum 100 lines per request")
 
-    # Load glossary from DB if context.series_id provided and no explicit glossary
+    # Load glossary from DB when series_id is provided and no explicit glossary
     if req.context.series_id and not req.context.glossary:
         try:
             from ..models.glossary import GlossaryEntry
@@ -217,7 +124,8 @@ def translate_subtitles(
                 db.query(GlossaryEntry)
                 .filter(
                     GlossaryEntry.tgt_lang == "cs",
-                    (GlossaryEntry.series_id == req.context.series_id) | (GlossaryEntry.series_id == None)  # noqa: E711
+                    (GlossaryEntry.series_id == req.context.series_id)
+                    | (GlossaryEntry.series_id == None),  # noqa: E711
                 )
                 .limit(50)
                 .all()
@@ -226,30 +134,43 @@ def translate_subtitles(
         except Exception:
             pass
 
-    api_key = _get_api_key(db)
-    if api_key:
-        try:
-            return _translate_with_claude(req.lines, req.context, api_key)
-        except Exception as e:
-            log.error("Claude translation failed: %s", e)
-            raise HTTPException(502, f"Claude API error: {e}")
-
-    # Fallback: Ollama
-    try:
-        from ..models.app_settings import AppSetting
-        row = db.query(AppSetting).filter(AppSetting.key == "ollama_host").first()
-        ollama_host = (row.value if row and row.value else None) or os.environ.get("OLLAMA_HOST", "")
-    except Exception:
-        ollama_host = os.environ.get("OLLAMA_HOST", "")
-
-    if ollama_host:
-        try:
-            return _translate_with_ollama(req.lines, req.context, ollama_host)
-        except Exception as e:
-            log.error("Ollama translation failed: %s", e)
-            raise HTTPException(502, f"Ollama error: {e}")
-
-    raise HTTPException(
-        503,
-        "AI translation not configured. Add anthropic_api_key (Claude) or ollama_host to Settings.",
+    glossary_block = _build_glossary_prompt(req.context.glossary)
+    lines_text = "\n".join([f'{{"id":{l.id},"jp":"{l.jp}"}}' for l in req.lines])
+    user_msg = (
+        f"{glossary_block}"
+        "Přelož tyto titulky do češtiny. Pro každý řádek vrať objekt s poli id, cs (hlavní překlad), "
+        "a alts (2 alternativní překlady). Vrať POUZE JSON pole bez dalšího textu.\n\n"
+        f"Řádky:\n{lines_text}\n\n"
+        'Formát odpovědi: [{"id":1,"cs":"překlad","alts":["alt1","alt2"]},...]'
     )
+    messages = [
+        {"role": "system", "content": _build_system_prompt(req.context)},
+        {"role": "user",   "content": user_msg},
+    ]
+
+    from ..services.ai_provider import call_ai
+    try:
+        text, model_id = call_ai(messages, db, timeout=60)
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    except Exception as e:
+        log.error("AI translation failed: %s", e)
+        raise HTTPException(502, f"AI error: {e}")
+
+    # Strip markdown code fences if model wraps JSON in them
+    content = text
+    if content.startswith("```"):
+        content = re.sub(r"^```[a-z]*\n?", "", content, flags=re.MULTILINE)
+        content = content.rstrip("`").strip()
+
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError as exc:
+        log.error("AI returned invalid JSON: %s\nRaw: %.200s", exc, content)
+        raise HTTPException(502, f"AI returned invalid JSON: {exc}")
+
+    translations = [
+        TranslatedLine(id=item["id"], cs=item.get("cs", ""), alts=item.get("alts", []))
+        for item in data
+    ]
+    return TranslateResponse(translations=translations, model=model_id)

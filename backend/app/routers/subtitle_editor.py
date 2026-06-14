@@ -132,7 +132,7 @@ def get_subtitle_content(
         raise HTTPException(400, "Titulek nemá cestu k souboru")
 
     try:
-        local = path_resolver.resolve(sub.file_path)
+        local = path_resolver.unc_to_local(path_resolver.resolve(sub.file_path))
     except Exception:
         local = sub.file_path
 
@@ -161,7 +161,7 @@ def shift_subtitle(
         raise HTTPException(404, "Titulek nenalezen")
 
     try:
-        local = path_resolver.resolve(sub.file_path)
+        local = path_resolver.unc_to_local(path_resolver.resolve(sub.file_path))
     except Exception:
         local = sub.file_path
 
@@ -190,7 +190,7 @@ def save_subtitle(
         raise HTTPException(404, "Titulek nenalezen")
 
     try:
-        local = path_resolver.resolve(sub.file_path)
+        local = path_resolver.unc_to_local(path_resolver.resolve(sub.file_path))
     except Exception:
         local = sub.file_path
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import _get_role, get_current_user
 from ..models.user import User
 from ..services.auth import create_access_token, hash_password, verify_password
 
@@ -22,13 +22,14 @@ _attempts: dict[str, list[float]] = defaultdict(list)
 
 _RATE_WINDOW = 60   # sekund
 _RATE_LIMIT  = 10   # pokusů za okno
+_MAX_TRACKED_IPS = 5_000  # ochrana proti neomezenému růstu slovníku
 
 
 def _check_rate_limit(ip: str) -> None:
     now = time.monotonic()
     with _rate_lock:
+        # Čistíme záznamy starší než okno pro aktuální IP
         timestamps = _attempts[ip]
-        # Vyhoď staré záznamy mimo okno
         timestamps = [t for t in timestamps if now - t < _RATE_WINDOW]
         _attempts[ip] = timestamps
 
@@ -43,6 +44,13 @@ def _check_rate_limit(ip: str) -> None:
 
         timestamps.append(now)
         _attempts[ip] = timestamps
+
+        # Odstraní IP adresy, které nemají žádné záznamy v aktuálním okně,
+        # pokud slovník přesáhne limit — předchází memory leaku při provozu.
+        if len(_attempts) > _MAX_TRACKED_IPS:
+            stale = [k for k, v in _attempts.items() if not v]
+            for k in stale:
+                del _attempts[k]
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -70,11 +78,12 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
         email     = req.email,
         hashed_pw = hash_password(req.password),
         is_admin  = is_first,
+        role      = "admin" if is_first else "viewer",
     )
     db.add(user)
     db.commit()
     db.refresh(user)
-    return {"id": user.id, "username": user.username, "is_admin": user.is_admin}
+    return {"id": user.id, "username": user.username, "is_admin": user.is_admin, "role": user.role}
 
 
 @router.post("/token", response_model=TokenResponse)
@@ -99,9 +108,19 @@ def login(
 
 @router.get("/me")
 def me(current_user: User = Depends(get_current_user)):
+    import json
+    role = _get_role(current_user)
+    perms: dict = {}
+    if role == "custom":
+        try:
+            perms = json.loads(current_user.permissions or "{}")
+        except Exception:
+            pass
     return {
-        "id":       current_user.id,
-        "username": current_user.username,
-        "email":    current_user.email,
-        "is_admin": current_user.is_admin,
+        "id":          current_user.id,
+        "username":    current_user.username,
+        "email":       current_user.email,
+        "is_admin":    current_user.is_admin,
+        "role":        role,
+        "permissions": perms,
     }

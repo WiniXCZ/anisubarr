@@ -2,13 +2,36 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Global animation keyframes ──────────────────────────────────────── */
+@keyframes fadeInBackdrop {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes scaleInModal {
+  from { opacity: 0; transform: scale(0.96) translateY(-6px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slide-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
 @layer base {
+  :root { scroll-behavior: smooth; }
+
   html {
     background-color: #0e1220;
     color: #e8e9f2;
     font-family: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
+  img, video { max-width: 100%; display: block; }
 
   /* Scrollbar */
   ::-webkit-scrollbar { width: 5px; height: 5px; }
@@ -29,6 +52,42 @@
 }
 
 @layer utilities {
+  /* ── Animation helpers ── */
+  .animate-fade-backdrop { animation: fadeInBackdrop 0.15s ease-out; }
+  .animate-scale-modal   { animation: scaleInModal   0.18s ease-out; }
+  .animate-slide-down    { animation: slideDown      0.15s ease-out; }
+
+  /* ── Skeleton loading ── */
+  .skeleton {
+    background: linear-gradient(90deg, #161a2a 25%, #252b42 50%, #161a2a 75%);
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s infinite;
+    border-radius: 6px;
+  }
+
+  /* ── Nav icon buttons (hover via CSS) ── */
+  .nav-icon-btn {
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .nav-icon-btn:hover {
+    background: rgba(255,255,255,0.07) !important;
+    color: #e8e9f2 !important;
+    border-color: rgba(255,255,255,0.14) !important;
+  }
+
+  /* ── Error banner ── */
+  .error-banner {
+    background: rgba(239,68,68,0.12);
+    color: #ef4444;
+    border: 1px solid rgba(239,68,68,0.25);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font: 500 13px "Space Grotesk";
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
   /* Text utilities */
   .font-mono { font-family: "JetBrains Mono", ui-monospace, monospace !important; }
   .font-jp   { font-family: "Noto Sans JP", sans-serif !important; }
@@ -88,6 +147,10 @@
     transition: background 0.12s;
   }
   .btn-sub:hover { background: #252b42; }
+
+  /* Animations */
+  .fade-in  { animation: fade-in  0.15s ease-out; }
+  .slide-up { animation: slide-up 0.2s  ease-out; }
 
   /* Status pill */
   .status-pill {

@@ -1,15 +1,41 @@
-from pydantic_settings import BaseSettings
+import logging
 from functools import lru_cache
+
+from pydantic import model_validator
+from pydantic_settings import BaseSettings
+
+log = logging.getLogger("anisubarr.config")
+
+_DEFAULT_JWT_SECRET = "change-me-in-production"
 
 
 class Settings(BaseSettings):
+
+    @model_validator(mode="after")
+    def _check_jwt_secret(self) -> "Settings":
+        if self.jwt_secret == _DEFAULT_JWT_SECRET:
+            raise ValueError(
+                "JWT secret is set to the insecure default value. "
+                "Set JWT_SECRET in your .env file to a strong random string."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _seerr_backward_compat(self) -> "Settings":
+        """Copy overseerr_* → seerr_* if seerr_* are empty (env var rename compat)."""
+        if not self.seerr_host and self.overseerr_host:
+            self.seerr_host = self.overseerr_host
+        if not self.seerr_api_key and self.overseerr_api_key:
+            self.seerr_api_key = self.overseerr_api_key
+        return self
+
     # App
     app_name: str = "Anisubarr"
     app_version: str = "0.1.0"
     debug: bool = False
 
     # JWT
-    jwt_secret: str = "change-me-in-production"
+    jwt_secret: str = _DEFAULT_JWT_SECRET
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7  # 7 days
 
@@ -52,12 +78,22 @@ class Settings(BaseSettings):
     kamui_username: str = ""
     kamui_password: str = ""
     kamui_rar_password: str = "kamui"
+    gensubs_username: str = ""
+    gensubs_password: str = ""
+
+    # TVDB (used to enrich Discover results with TVDB IDs for Sonarr add)
+    tvdb_api_key: str = ""
+    tvdb_pin: str = ""
 
     # AniList (no key needed — public GraphQL API)
     anilist_api: str = "https://graphql.anilist.co"
 
-    # Overseerr / Jellyseerr
-    overseerr_host: str = ""       # e.g. http://192.168.1.149:5055
+    # Seerr (dříve Overseerr / Jellyseerr)
+    seerr_host: str = ""           # e.g. http://192.168.1.149:5055
+    seerr_api_key: str = ""
+    seerr_external_url: str = ""   # veřejná adresa, e.g. https://zadosti.luni.ml
+    # Backward compat aliases (přečteny při migraci DB při startu)
+    overseerr_host: str = ""
     overseerr_api_key: str = ""
 
     # Emby / Jellyfin
@@ -71,6 +107,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 @lru_cache()

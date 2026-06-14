@@ -3,6 +3,7 @@ sync.py – Sonarr ↔ AniList sync router.
 Pulls everything Sonarr has, enriches with AniList metadata, persists to DB.
 """
 import logging
+import time
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
@@ -41,17 +42,18 @@ def sync_one(
 @router.post("/auto-unmonitor", status_code=202)
 def auto_unmonitor(
     background_tasks: BackgroundTasks,
-    body: dict = {},
+    body: dict | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
     """
     Scan all series and unmonitor in Sonarr:
-      • episodes that have Czech subtitles
-      • whole series where every episode with a file has Czech subtitles
+      \u2022 episodes that have Czech subtitles
+      \u2022 whole series where every episode with a file has Czech subtitles
 
-    body (optional): { series_ids: [int, ...] }  — limit to specific series
+    body (optional): { series_ids: [int, ...] }  \u2014 limit to specific series
     """
+    body = body or {}
     series_ids = body.get("series_ids") if isinstance(body, dict) else None
     background_tasks.add_task(_auto_unmonitor_task, series_ids)
     return {"status": "started"}
@@ -144,17 +146,17 @@ def update_series_root_folder(
     root_folder_path = body.get("root_folder_path", "")
     if not root_folder_path:
         raise HTTPException(400, "root_folder_path required")
-    old_series_path = s.path or "—"
+    old_series_path = s.path or "\u2014"
     # Derive old root folder (parent of the series folder) for consistent labelling
     import posixpath, ntpath
     _sep = "/" if "/" in old_series_path else "\\"
     _join = posixpath if _sep == "/" else ntpath
-    old_root = _join.dirname(old_series_path) if old_series_path != "—" else "—"
+    old_root = _join.dirname(old_series_path) if old_series_path != "\u2014" else "\u2014"
     sonarr_id = s.sonarr_id
-    # Label shows root folder → root folder so both sides are comparable
+    # Label shows root folder -> root folder so both sides are comparable
     run = job_log.start_run(
         "root_folder_move",
-        f"Přesun kořenové složky ({s.title}): {old_root} → {root_folder_path}",
+        f"P\u0159esun ko\u0159enov\u00e9 slo\u017eky ({s.title}): {old_root} \u2192 {root_folder_path}",
     )
     try:
         # move_files=True tells Sonarr to physically relocate all media files
@@ -164,8 +166,8 @@ def update_series_root_folder(
         new_path = result.get("path") or root_folder_path
         s.path = new_path
         db.commit()
-        # Finish message shows full series paths so it's clear where files ended up
-        job_log.finish_run(run, "done", f"{old_series_path} → {new_path}")
+        # Finish message shows full series paths so it is clear where files ended up
+        job_log.finish_run(run, "done", f"{old_series_path} \u2192 {new_path}")
         # Queue a delayed sync so episode file_paths get updated after Sonarr moves files
         background_tasks.add_task(_delayed_sync_series, sonarr_id, delay_sec=8)
         return {"path": new_path, "move_files": True}
@@ -190,9 +192,9 @@ def bulk_root_folder(
     return {"status": "started", "count": len(series_ids)}
 
 
-# ──────────────────────────────────────────
+# ──────────────────────────────────────────────
 # Background workers
-# ──────────────────────────────────────────
+# ──────────────────────────────────────────────
 
 def _bulk_root_folder_bg(series_ids: list[int], root_folder_path: str) -> None:
     """Background: move multiple series to a new root folder one by one."""
@@ -202,7 +204,7 @@ def _bulk_root_folder_bg(series_ids: list[int], root_folder_path: str) -> None:
 
     run = job_log.start_run(
         "bulk_root_folder_move",
-        f"Hromadný přesun do {root_folder_path} ({len(series_ids)} sérií)",
+        f"Hromadn\u00fd p\u0159esun do {root_folder_path} ({len(series_ids)} s\u00e9ri\u00ed)",
     )
     total = len(series_ids)
     errors: list[str] = []
@@ -214,7 +216,7 @@ def _bulk_root_folder_bg(series_ids: list[int], root_folder_path: str) -> None:
             db.close()
 
         for idx, s in enumerate(series_list, 1):
-            job_log.update_progress(run.run_id, idx - 1, total, f"{idx}/{total} — {s.title}")
+            job_log.update_progress(run.run_id, idx - 1, total, f"{idx}/{total} \u2014 {s.title}")
             try:
                 result = sonarr_svc.update_series(
                     s.sonarr_id, rootFolderPath=root_folder_path, move_files=True
@@ -240,7 +242,7 @@ def _bulk_root_folder_bg(series_ids: list[int], root_folder_path: str) -> None:
             )
         else:
             job_log.finish_run(
-                run, "done", f"Přesunuto {total} sérií → {root_folder_path}"
+                run, "done", f"P\u0159esunuto {total} s\u00e9ri\u00ed \u2192 {root_folder_path}"
             )
 
         # Queue delayed syncs so episode paths get updated
@@ -259,7 +261,7 @@ def _bulk_root_folder_bg(series_ids: list[int], root_folder_path: str) -> None:
 
 
 def _full_sync_logged():
-    """_full_sync obalený job_log záznamy."""
+    """_full_sync obaleny job_log zaznamy."""
     from ..services import job_log
     run = job_log.start_run("sonarr_sync", "Sonarr sync")
     try:
@@ -269,11 +271,26 @@ def _full_sync_logged():
         job_log.finish_run(run, "error", str(e)[:300])
         raise
 
+    # Auto task: run promotion check after sync if enabled (default true)
+    try:
+        from ..database import SessionLocal as _SL
+        from ..utils.settings_helper import read_setting as _rs
+        _db = _SL()
+        try:
+            if _rs("auto_promote_check_on_sync", _db) != "false":
+                from ..services.promotion import run_all_promotions
+                run_all_promotions(_db)
+                log.info("[sync] auto_promote_check_on_sync: kontrola dokoncena")
+        finally:
+            _db.close()
+    except Exception as e:
+        log.warning("[sync] auto_promote_check_on_sync failed: %s", e)
+
 
 def _sync_series_logged(sonarr_id: int):
-    """_sync_series obalený job_log záznamy."""
+    """_sync_series obaleny job_log zaznamy."""
     from ..services import job_log
-    run = job_log.start_run("sonarr_sync_one", f"Sync série #{sonarr_id}")
+    run = job_log.start_run("sonarr_sync_one", f"Sync serie #{sonarr_id}")
     try:
         _sync_series(sonarr_id)
         job_log.finish_run(run, "done")
@@ -287,10 +304,10 @@ def _delayed_sync_series(sonarr_id: int, delay_sec: int = 8) -> None:
     import time
     from ..services import job_log
     time.sleep(delay_sec)
-    run = job_log.start_run("sonarr_sync_one", f"Sync po přesunu složky (série #{sonarr_id})")
+    run = job_log.start_run("sonarr_sync_one", f"Sync po presunu slozky (serie #{sonarr_id})")
     try:
         _sync_series(sonarr_id)
-        job_log.finish_run(run, "done", "Cesty epizod aktualizovány")
+        job_log.finish_run(run, "done", "Cesty epizod aktualizovany")
     except Exception as e:
         job_log.finish_run(run, "error", str(e)[:300])
 
@@ -335,6 +352,7 @@ def _sync_series_raw(raw: dict, quality_map: dict, tag_map: dict):
 
         # Upsert series row
         row = db.query(Series).filter(Series.sonarr_id == sonarr_id).first()
+        is_new = row is None
         if not row:
             row = Series(sonarr_id=sonarr_id)
             db.add(row)
@@ -344,6 +362,21 @@ def _sync_series_raw(raw: dict, quality_map: dict, tag_map: dict):
 
         row.synced_at = datetime.now(timezone.utc)
 
+        # Auto-detect promoted status from Sonarr path.
+        # If the series is physically located in the "anime_series" root folder,
+        # mark it as promoted=True so it shows correctly in the UI without
+        # requiring a manual publish action.
+        if not row.promoted and row.path:
+            _path_lower = row.path.replace("\\", "/").lower()
+            _PROMOTED_MARKERS = ("anime_series", "animeseries", "anime series")
+            if any(marker in _path_lower for marker in _PROMOTED_MARKERS):
+                row.promoted    = True
+                row.promoted_at = datetime.now(timezone.utc)
+                log.info(
+                    "[sync] Auto-set promoted=True for '%s' (path in anime_series folder)",
+                    row.title,
+                )
+
         # Enrich from AniList if not yet done
         if not row.anilist_id:
             media = anilist_svc.search_anime(row.title)
@@ -352,21 +385,72 @@ def _sync_series_raw(raw: dict, quality_map: dict, tag_map: dict):
                 for k, v in norm.items():
                     if v is not None:
                         setattr(row, k, v)
+            # AniList enforces a rate limit (degraded to ~30 req/min as of
+            # 2025) — pace requests so a full-library sync of many new
+            # series doesn't get throttled with 429s.
+            time.sleep(0.5)
+
+        # Lookup Emby ID (best-effort, only when missing or new series)
+        _title_changed = is_new or (fields.get("title") and fields.get("title") != row.title)
+        if not row.emby_id or _title_changed:
+            try:
+                from ..services.emby import fetch_emby_id
+                emby_id = fetch_emby_id(row.title, year=row.year)
+                if emby_id:
+                    row.emby_id = emby_id
+                    log.debug("[sync] Emby ID for '%s': %s", row.title, emby_id)
+            except Exception as _emby_exc:
+                log.warning("[sync] Emby lookup failed for '%s': %s", row.title, _emby_exc)
 
         db.flush()
 
-        # ── Sync episodes ──────────────────────────────────────────────
+        # ── Auto-translate series description ────────────────────────────────────
+        if not row.overview_cs:
+            try:
+                from ..utils.settings_helper import read_setting as _rs
+                if _rs("auto_translate_description", db) == "true":
+                    from ..services.ai_description import ensure_czech_description
+                    ensure_czech_description(row, db)
+            except Exception as _tr_exc:
+                log.warning("[sync] Series description translation failed for '%s': %s", row.title, _tr_exc)
+
+        # ── Sync episodes ────────────────────────────────────────────────────────
         try:
             episodes_raw = sonarr_svc.get_episodes(sonarr_id)
         except Exception as e:
             log.warning("[sync] get_episodes(%s) failed: %s", sonarr_id, e)
             episodes_raw = []
 
+        # Check translation setting once for the whole episode batch
+        _translate_episodes = False
+        try:
+            from ..utils.settings_helper import read_setting as _rs2
+            _translate_episodes = _rs2("auto_translate_description", db) == "true"
+        except Exception:
+            pass
+
         for ep_raw in episodes_raw:
             _sync_episode(db, row.id, ep_raw)
 
         db.commit()
-        log.info("[sync] OK '%s' — %d episodes", row.title, len(episodes_raw))
+
+        # ── Auto-translate episode descriptions (only new/untranslated) ──────────
+        if _translate_episodes:
+            try:
+                from ..services.ai_description import ensure_czech_episode_description
+                untranslated = [
+                    ep for ep in db.query(Episode)
+                    .filter(Episode.series_id == row.id, Episode.overview_cs == None, Episode.overview != None)
+                    .all()
+                ]
+                for ep in untranslated:
+                    try:
+                        ensure_czech_episode_description(ep, db)
+                    except Exception as _ep_tr_exc:
+                        log.warning("[sync] Episode translation failed ep %d: %s", ep.id, _ep_tr_exc)
+            except Exception as _ep_batch_exc:
+                log.warning("[sync] Episode batch translation failed for '%s': %s", row.title, _ep_batch_exc)
+        log.info("[sync] OK '%s' \u2014 %d episodes", row.title, len(episodes_raw))
 
         # Refresh cached episode/subtitle counts (includes disk scan)
         try:
@@ -374,6 +458,17 @@ def _sync_series_raw(raw: dict, quality_map: dict, tag_map: dict):
             refresh_series_counts(db, row, use_disk=True)
         except Exception as e:
             log.warning("[sync] cached counts update failed for '%s': %s", row.title, e)
+
+        # Auto-generate NFO for newly added series (controlled by setting, default true)
+        if is_new and row.path:
+            from ..utils.settings_helper import read_setting as _read_setting
+            if _read_setting("nfo_auto_generate_on_add", db) != "false":
+                try:
+                    from ..services import nfo as nfo_svc
+                    nfo_svc.refresh_series_nfo(row, db)
+                    log.info("[sync] NFO generated for new series '%s'", row.title)
+                except Exception as e:
+                    log.warning("[sync] NFO generation failed for new series '%s': %s", row.title, e)
 
     except Exception as e:
         db.rollback()
@@ -421,14 +516,14 @@ def _auto_unmonitor_task(series_ids=None) -> None:
     from ..services import job_log, auto_unmonitor as au
     from ..database import SessionLocal
 
-    label = "Auto-unmonitor" if not series_ids else f"Auto-unmonitor ({len(series_ids)} sérií)"
+    label = "Auto-unmonitor" if not series_ids else f"Auto-unmonitor ({len(series_ids)} serii)"
     run = job_log.start_run("auto_unmonitor", label)
     db = SessionLocal()
     try:
         stats = au.run_auto_unmonitor(db, series_ids=series_ids)
         msg = (
             f"{stats['episodes_unmonitored']} epizod, "
-            f"{stats['series_unmonitored']} sérií odmonitováno"
+            f"{stats['series_unmonitored']} serii odmonitorovano"
         )
         if stats.get("errors"):
             job_log.finish_run(run, "error", msg + f" | chyby: {'; '.join(stats['errors'][:2])}")

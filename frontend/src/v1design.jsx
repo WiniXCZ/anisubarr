@@ -15,15 +15,18 @@ export const THEME = {
 export const btnGhost = (t) => ({
   background:'transparent', color:t.textDim, border:`1px solid ${t.border}`,
   borderRadius:7, padding:'5px 9px', font:'500 12px/1 "Space Grotesk"', cursor:'pointer',
+  transition:'border-color 0.12s, color 0.12s, background 0.12s',
 });
 export const btnPrimary = (t) => ({
   background:t.accent, color:'#fff', border:'none',
   borderRadius:7, padding:'6px 12px', font:'600 12px/1 "Space Grotesk"', cursor:'pointer',
   boxShadow:`0 4px 14px ${t.accent}55`,
+  transition:'opacity 0.12s',
 });
 export const btnSub = (t) => ({
   background:t.panel2, color:t.text, border:`1px solid ${t.border}`,
   borderRadius:7, padding:'5px 10px', font:'500 12px/1 "Space Grotesk"', cursor:'pointer',
+  transition:'background 0.12s, border-color 0.12s',
 });
 
 // Status mapping for API status codes
@@ -167,6 +170,7 @@ export function FilterPill({ theme, label, active, count, onClick }) {
       color:active ? '#fff' : theme.textDim,
       border:`1px solid ${active ? theme.accent : theme.border}`,
       font:'600 12px "Space Grotesk"', cursor:'pointer',
+      transition:'background 0.12s, color 0.12s, border-color 0.12s',
     }}>
       {label}
       {count != null && <span style={{font:'700 10px JetBrains Mono',
@@ -233,9 +237,10 @@ export function Toggle({ theme, on, onChange }) {
   );
 }
 
-export function TextField({ theme, value, onChange, width = 200, mono = false, placeholder }) {
+export function TextField({ theme, value, onChange, width = 200, mono = false, placeholder, type = 'text' }) {
   return (
     <input
+      type={type}
       value={value}
       onChange={e => onChange && onChange(e.target.value)}
       placeholder={placeholder}

@@ -18,7 +18,7 @@ from ..models.series import Series
 from ..models.user import User
 from ..services import promotion as promo_svc
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("anisubarr.promotion")
 router = APIRouter(prefix="/api/promotion", tags=["promotion"])
 
 
@@ -117,6 +117,24 @@ def demote_series(
         raise HTTPException(404, "Seriál nenalezen")
     background_tasks.add_task(_bg_demote, series_id)
     return {"status": "started", "series_id": series_id, "title": s.title}
+
+
+@router.post("/recheck-all")
+def recheck_all_promotions(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """
+    Check all currently promoted series against the current promotion logic.
+    Any series that no longer qualifies is demoted (promoted=False, has_issue=True).
+    Does not call Sonarr — DB-only update.
+    """
+    results = promo_svc.fix_wrongly_promoted(db)
+    return {
+        "status":  "done",
+        "demoted": len(results),
+        "results": results,
+    }
 
 
 @router.get("/status")

@@ -1,11 +1,12 @@
-import { useState, useRef } from "react";
+// Not imported anywhere — SeriesDetail.jsx uses its own local EpisodeRow (different props/layout).
+import { memo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown, ChevronRight, Download, Search, Loader2,
   CheckCircle2, XCircle, Film, FolderOpen, Upload, Eye, EyeOff,
   Timer, Trash2, Scissors, HardDrive, Cpu, Volume2, Clock, Calendar,
-  Tag, ExternalLink, MoreVertical, Pencil, FileText,
+  Tag, ExternalLink, MoreVertical, Pencil, FileText, Play,
 } from "lucide-react";
 import clsx from "clsx";
 import Tooltip from "./Tooltip";
@@ -327,7 +328,7 @@ function GroupHeader({ label, count, allSelected, onSelectAll }) {
 
 // ── EpisodeRow ────────────────────────────────────────────────────────────────
 
-export default function EpisodeRow({ episode, seriesId, seriesCoverUrl, selected = false, onToggle }) {
+const EpisodeRow = memo(function EpisodeRow({ episode, seriesId, seriesCoverUrl, selected = false, onToggle }) {
   const navigate = useNavigate();
   const [open,              setOpen]              = useState(false);
   const [showUpload,        setShowUpload]        = useState(false);
@@ -337,6 +338,7 @@ export default function EpisodeRow({ episode, seriesId, seriesCoverUrl, selected
   const [selectedDiskPaths, setSelectedDiskPaths] = useState(new Set());
   const [autoSync,          setAutoSync]          = useState(false);
   const [imgError,          setImgError]          = useState(false);
+  const [dlMsg,             setDlMsg]             = useState("");
   const qc = useQueryClient();
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -428,7 +430,19 @@ export default function EpisodeRow({ episode, seriesId, seriesCoverUrl, selected
 
   const { isPending: downloading, mutate: doDownloadBest } = useMutation({
     mutationFn: () => downloadBest({ episode_id: episode.id }),
-    onSuccess: _invalidate,
+    onSuccess: (res) => {
+      _invalidate();
+      const d = res.data || {};
+      const msgs = [];
+      if (d.warning) msgs.push(`⚠️ ${d.warning}`);
+      if (d.language_warning) msgs.push(`⚠️ ${d.language_warning}`);
+      setDlMsg(msgs.join("\n") || "✓ Titulek stažen");
+      setTimeout(() => setDlMsg(""), 8000);
+    },
+    onError: (e) => {
+      setDlMsg(`✗ ${e?.response?.data?.detail || "Žádné titulky nenalezeny"}`);
+      setTimeout(() => setDlMsg(""), 8000);
+    },
   });
 
   const { mutate: doDownload, isPending: dlPending } = useMutation({
@@ -440,7 +454,19 @@ export default function EpisodeRow({ episode, seriesId, seriesCoverUrl, selected
       language: result.language,
       auto_sync: autoSync,
     }),
-    onSuccess: _invalidate,
+    onSuccess: (res) => {
+      _invalidate();
+      const d = res.data || {};
+      const msgs = [];
+      if (d.warning) msgs.push(`⚠️ ${d.warning}`);
+      if (d.language_warning) msgs.push(`⚠️ ${d.language_warning}`);
+      setDlMsg(msgs.join("\n") || "✓ Titulek stažen");
+      setTimeout(() => setDlMsg(""), 8000);
+    },
+    onError: (e) => {
+      setDlMsg(`✗ ${e?.response?.data?.detail || "Chyba při stahování"}`);
+      setTimeout(() => setDlMsg(""), 8000);
+    },
   });
 
   const { data: diskFiles, isLoading: filesLoading } = useQuery({
@@ -647,8 +673,19 @@ export default function EpisodeRow({ episode, seriesId, seriesCoverUrl, selected
                 )}
               </div>
 
-              {/* Editor button at bottom of left column */}
-              <div className="p-3">
+              {/* Editor + Player buttons at bottom of left column */}
+              <div className="p-3 flex flex-col gap-2">
+                {episode.has_file && (
+                  <Tooltip text="Otevřít video přehrávač" placement="right">
+                    <button
+                      onClick={() => navigate(`/player/${seriesId}/${episode.id}`)}
+                      className="w-full flex items-center justify-center gap-1.5 text-xs px-3 py-1.5 bg-accent hover:bg-accent/80 text-white rounded-lg transition-colors"
+                    >
+                      <Play size={12} />
+                      Přehrát
+                    </button>
+                  </Tooltip>
+                )}
                 <Tooltip text="Otevřít titulky v editoru" placement="right">
                   <button
                     onClick={() => openInEditor(null)}
@@ -826,6 +863,17 @@ export default function EpisodeRow({ episode, seriesId, seriesCoverUrl, selected
                 <div className="px-5 py-4 text-xs text-muted/40 italic">Žádné titulky</div>
               )}
 
+              {/* Download messages (warning / lang-check) */}
+              {dlMsg && !searchData?.data?.results?.length && (
+                <div className="px-4 py-2 border-t border-border/40">
+                  <p className={clsx("text-xs px-2.5 py-1.5 rounded-lg",
+                    dlMsg.startsWith("✓") ? "bg-green-900/20 text-green-400"
+                    : dlMsg.startsWith("✗") ? "bg-red-900/20 text-red-400"
+                    : "bg-yellow-900/20 text-yellow-400"
+                  )}>{dlMsg}</p>
+                </div>
+              )}
+
               {/* Status messages */}
               {(syncMsg || stripMsg) && (
                 <div className="px-4 py-2 flex flex-col gap-1 border-t border-border/40">
@@ -975,9 +1023,10 @@ export default function EpisodeRow({ episode, seriesId, seriesCoverUrl, selected
                       "text-[10px] font-semibold px-1.5 py-0.5 rounded border uppercase flex-shrink-0",
                       SOURCE_STYLE[r.source] ?? "bg-surface text-muted border-border"
                     )}>{SOURCE_LABEL[r.source] ?? r.source}</span>
+                    <LangBadge lang={r.language} />
                     <span className={clsx(
-                      "text-sm font-medium w-24 flex-shrink-0",
-                      r.language === "cs" ? "text-accent" : "text-muted"
+                      "text-xs font-medium flex-shrink-0 hidden sm:inline",
+                      r.language === "cs" ? "text-accent" : "text-muted/70"
                     )}>{langName(r.language)}</span>
                     <span className="flex-1 min-w-0 text-xs text-text truncate" title={r.title}>
                       {r.title}
@@ -997,6 +1046,14 @@ export default function EpisodeRow({ episode, seriesId, seriesCoverUrl, selected
                   </div>
                 ))}
               </div>
+              {dlMsg && (
+                <p className={clsx(
+                  "text-xs px-2.5 py-1.5 rounded-lg mt-2",
+                  dlMsg.startsWith("✓") ? "bg-green-900/20 text-green-400"
+                  : dlMsg.startsWith("✗") ? "bg-red-900/20 text-red-400"
+                  : "bg-yellow-900/20 text-yellow-400"
+                )}>{dlMsg}</p>
+              )}
               {searchData?.data?.log?.length > 0 && (
                 <details className="text-xs text-muted mt-2">
                   <summary className="cursor-pointer hover:text-text">Log hledání</summary>
@@ -1012,4 +1069,6 @@ export default function EpisodeRow({ episode, seriesId, seriesCoverUrl, selected
       )}
     </div>
   );
-}
+});
+
+export default EpisodeRow;

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, subqueryload
 from typing import Optional
 import os
 import threading
@@ -22,6 +22,8 @@ from ..deps import get_current_user
 from ..models.series import Episode, Subtitle
 from ..models.user import User
 from ..config import get_settings
+from ..utils import CS_LANGS
+from ..utils.settings_helper import read_setting as _read_setting
 from ..services.hiyori import HiyoriScraper
 from ..services.hns import HnsScraper
 from ..services.kamui import KamuiScraper
@@ -60,49 +62,92 @@ def _sync_after_download(episode_id: int) -> None:
     t.start()
 
 
+def _auto_unmonitor_episode(ep) -> None:
+    """Unmonitor episode in Sonarr after subtitle download (best-effort, fire-and-forget)."""
+    import logging
+    log = logging.getLogger("anisubarr.subtitles")
+    if not ep or not ep.sonarr_ep_id:
+        return
+    try:
+        from ..services import sonarr as sonarr_svc
+        sonarr_svc.set_episodes_monitored([ep.sonarr_ep_id], monitored=False)
+        log.info("Auto-unmonitor: episode %d (sonarr_ep_id=%d) unmonitored after subtitle download",
+                 ep.id, ep.sonarr_ep_id)
+    except Exception as exc:
+        log.warning("Auto-unmonitor failed for episode %d: %s", ep.id, exc)
+
+
 # ──────────────────────────────────────────
 # Scraper factory (single instance per call – stateless enough for HTTP)
 # ──────────────────────────────────────────
 
-def _read_setting(key: str, db=None) -> str:
-    """Read a setting from AppSetting DB (preferred) or .env fallback."""
-    if db is not None:
-        try:
-            from ..models.app_settings import AppSetting
-            row = db.query(AppSetting).filter(AppSetting.key == key).first()
-            if row and row.value:
-                return row.value
-        except Exception:
-            pass
-    return getattr(settings, key, None) or ""
+
+def _scraper_timeout(db=None) -> int:
+    raw = _read_setting("scraper_timeout", db)
+    try:
+        return max(5, int(raw)) if raw else 30
+    except (ValueError, TypeError):
+        return 30
 
 
 def _hiyori(db=None) -> HiyoriScraper | None:
     u = _read_setting("hiyori_username", db) or settings.hiyori_username
     p = _read_setting("hiyori_password", db) or settings.hiyori_password
     if u and p:
-        return HiyoriScraper(u, p)
+        return HiyoriScraper(u, p, timeout=_scraper_timeout(db))
     return None
 
 def _hns(db=None) -> HnsScraper | None:
     u = _read_setting("hns_username", db) or settings.hns_username
     p = _read_setting("hns_password", db) or settings.hns_password
     if u and p:
-        return HnsScraper(u, p)
+        return HnsScraper(u, p, timeout=_scraper_timeout(db))
     return None
 
 def _kamui(db=None) -> KamuiScraper | None:
-    u = _read_setting("kamui_username", db)
-    p = _read_setting("kamui_password", db)
-    r = _read_setting("kamui_rar_password", db) or "kamui"
+    u = _read_setting("kamui_username", db) or settings.kamui_username
+    p = _read_setting("kamui_password", db) or settings.kamui_password
+    r = _read_setting("kamui_rar_password", db) or settings.kamui_rar_password or "kamui"
     if u and p:
-        return KamuiScraper(u, p, rar_password=r)
+        return KamuiScraper(u, p, rar_password=r, timeout=_scraper_timeout(db))
     return None
 
 def _gensubs(db=None) -> GenSubsScraper:
-    u = _read_setting("gensubs_username", db)
-    p = _read_setting("gensubs_password", db)
+    u = _read_setting("gensubs_username", db) or getattr(settings, "gensubs_username", "")
+    p = _read_setting("gensubs_password", db) or getattr(settings, "gensubs_password", "")
     return GenSubsScraper(u, p)
+
+
+_DEFAULT_PROVIDER_ORDER = ["hiyori", "hns", "kamui", "gensubs"]
+
+
+def _get_provider_order(db=None) -> list[str]:
+    """Return scraper provider order (DB > legacy setting > default).
+
+    Reads ``scraper_provider_order`` (preferred), falling back to the legacy
+    ``subtitle_provider_priority`` key, then the default order. Any known
+    provider missing from the configured list is appended at the end so
+    every scraper is always tried.
+
+    If ``subtitle_preferred_provider`` is set to a specific provider (i.e.
+    not "any"/empty), that provider is moved to the front of the order —
+    it acts as an override for auto-download.
+    """
+    raw = (
+        _read_setting("scraper_provider_order", db)
+        or _read_setting("subtitle_provider_priority", db)
+        or ",".join(_DEFAULT_PROVIDER_ORDER)
+    )
+    sources = [s.strip() for s in raw.split(",") if s.strip()]
+    for src in _DEFAULT_PROVIDER_ORDER:
+        if src not in sources:
+            sources.append(src)
+
+    preferred = (_read_setting("subtitle_preferred_provider", db) or "").strip().lower()
+    if preferred and preferred != "any" and preferred in sources:
+        sources = [preferred] + [s for s in sources if s != preferred]
+
+    return sources
 
 
 # ──────────────────────────────────────────
@@ -179,10 +224,22 @@ def search_subtitles(
         except Exception as e:
             _log(f"[{label}] chyba: {e}")
 
+    # Apply per-provider max_results limit
+    max_results_raw = _read_setting("scraper_max_results", db)
+    try:
+        max_per_provider = int(max_results_raw) if max_results_raw else 0
+    except (ValueError, TypeError):
+        max_per_provider = 0
+
     # Deduplicate by URL — same subtitle link from multiple scrapers counts once
     seen_urls: set[str] = set()
     deduped: list[dict] = []
+    per_source_counts: dict[str, int] = {}
     for r in results:
+        src_key = r.get("source", "")
+        if max_per_provider > 0:
+            if per_source_counts.get(src_key, 0) >= max_per_provider:
+                continue
         url = r.get("url", "")
         # Strip our synthetic params (_ep, _season) for comparison
         from urllib.parse import urlparse as _up, parse_qs as _pq, urlencode as _ue
@@ -192,6 +249,7 @@ def search_subtitles(
         if norm_url not in seen_urls:
             seen_urls.add(norm_url)
             deduped.append(r)
+            per_source_counts[src_key] = per_source_counts.get(src_key, 0) + 1
         else:
             _log(f"[dedup] duplicitní URL vynechána: {url[:80]}")
 
@@ -243,17 +301,58 @@ def download_subtitle(
         db.add(sub)
         db.commit()
         db.refresh(sub)
-        _langcheck_after_download(db, sub)   # detekce SK — opraví hned po stažení
+        lc = _langcheck_after_download(db, sub)   # detekce SK/EN — opraví hned po stažení
+        db.refresh(sub)                            # pick up detected_lang written by langcheck
         job_log.finish_run(run, "done", f"{req.source} → {ext}")
         # Fire-and-forget promotion check for this series
         _trigger_promotion_check(ep.series_id)
-        # Auto-sync if requested
-        if req.auto_sync:
+        # Auto-sync if requested (explicit flag, post-download action setting, or auto_alass_on_download)
+        post_action = _read_setting("subtitle_post_download_action", db) or "none"
+        should_sync = (
+            req.auto_sync
+            or post_action == "auto_sync"
+            or _read_setting("auto_alass_on_download", db) == "true"
+        )
+        if should_sync:
             _sync_after_download(ep.id)
-        return {"id": sub.id, "path": save_path, "format": ext, "language": req.language}
+        # Auto-unmonitor episode in Sonarr if setting is enabled
+        if _read_setting("sonarr_auto_unmonitor_after_download", db) == "true":
+            _auto_unmonitor_episode(ep)
+        # Auto task: Discord notification after subtitle download
+        if _read_setting("auto_discord_on_subtitles", db) != "false":
+            try:
+                from ..services import discord as discord_svc
+                series_obj = ep.series
+                ep_label = f"S{ep.season_number:02d}E{ep.episode_number:02d}"
+                discord_svc.notify_subtitles_downloaded(
+                    title=series_obj.title if series_obj else "?",
+                    episode=ep_label,
+                    source=req.source,
+                    emby_id=getattr(series_obj, "emby_id", None) if series_obj else None,
+                    db=db,
+                )
+            except Exception:
+                pass
+        resp: dict = {"id": sub.id, "path": save_path, "format": ext, "language": sub.language}
+        if not ep.file_path:
+            resp["warning"] = "Epizoda nemá cestu k souboru — titulek uložen do dočasného umístění. Po Sonarr sync bude třeba stáhnout znovu."
+        if lc and lc.get("action") == "fixed":
+            resp["language_warning"] = (
+                f"Detekovaný jazyk je {lc['to'].upper()} (ne {lc['from'].upper()}) "
+                f"— jistota {lc['conf']:.0%}. Záznam opraven."
+            )
+        elif sub.detected_lang and sub.detected_lang not in ("??",) and sub.detected_lang != req.language:
+            # Low-confidence mismatch — warn but don't auto-correct
+            resp["language_warning"] = (
+                f"Upozornění: detekovaný jazyk vypadá jako {sub.detected_lang.upper()} "
+                f"(očekáváno {req.language.upper()}) — nízká jistota, ponecháno."
+            )
+        return resp
+    except HTTPException:
+        raise
     except Exception as e:
         job_log.finish_run(run, "error", str(e)[:300])
-        raise
+        raise HTTPException(500, f"Chyba při stahování: {e}")
 
 
 @router.post("/download-best")
@@ -326,7 +425,7 @@ def download_best(
         db.add(sub)
         db.commit()
         db.refresh(sub)
-        _langcheck_after_download(db, sub)   # detekce SK
+        lc = _langcheck_after_download(db, sub)   # detekce SK
         job_log.finish_run(run, "done", f"{best['source']} → {ext}")
         # Fire-and-forget promotion check for this series
         _trigger_promotion_check(ep.series_id)
@@ -336,12 +435,95 @@ def download_best(
             should_sync = _read_setting("subtitle_auto_sync", db) == "true"
         if should_sync:
             _sync_after_download(ep.id)
-        return {"id": sub.id, "path": save_path, "format": ext, "source": best["source"]}
+        resp: dict = {"id": sub.id, "path": save_path, "format": ext, "source": best["source"]}
+        if not ep.file_path:
+            resp["warning"] = "Epizoda nemá cestu k souboru — titulek uložen do dočasného umístění."
+        if lc and lc.get("action") == "fixed":
+            resp["language_warning"] = (
+                f"Detekovaný jazyk je {lc['to'].upper()} (ne {lc['from'].upper()}) "
+                f"— jistota {lc['conf']:.0%}. Záznam opraven."
+            )
+        return resp
     except HTTPException:
         raise
     except Exception as e:
         job_log.finish_run(run, "error", str(e)[:300])
         raise
+
+
+def _download_best_for_episode(ep, db) -> str | None:
+    """Download best subtitle for an episode (used by webhook auto-download). Returns source or None."""
+    from ..utils.settings_helper import read_setting as _rs
+    from ..utils import CS_LANGS
+    lang = _rs("subtitle_preferred_language", db) or "cs"
+
+    # Skip search/download entirely if a matching subtitle already exists —
+    # avoids wasted scraper requests/rate-limit usage and unnecessary disk writes.
+    norm_lang = "cs" if lang in CS_LANGS else lang
+    existing = (
+        db.query(Subtitle)
+        .filter(Subtitle.episode_id == ep.id, Subtitle.language.in_(CS_LANGS if norm_lang == "cs" else [lang]))
+        .first()
+    )
+    if existing or (norm_lang == "cs" and _cs_subtitle_on_disk(ep)):
+        return existing.source if existing else None
+
+    sources = _get_provider_order(db)
+
+    _FACTORIES = {"hiyori": _hiyori, "hns": _hns, "kamui": _kamui, "gensubs": _gensubs}
+    results: list[dict] = []
+    for source in sources:
+        factory = _FACTORIES.get(source)
+        if not factory:
+            continue
+        scraper = factory(db)
+        if scraper is None:
+            continue
+        try:
+            found = scraper.search(
+                title=ep.series.title if ep.series else "",
+                season=ep.season_number,
+                episode=ep.episode_number,
+                language=lang,
+            )
+            results.extend(found)
+        except Exception:
+            pass
+        if results:
+            break
+
+    if not results:
+        return None
+
+    best = results[0]
+    raw_bytes = _fetch_bytes(best["source"], best["url"], db)
+    sub_bytes, ext = extract_subtitle_bytes(raw_bytes)
+    save_path = _save_subtitle(ep, sub_bytes, lang, ext)
+
+    try:
+        from ..services.subtitle_postprocess import process_subtitle_file
+        from ..routers.settings import get_subtitle_postprocess_cfg
+        process_subtitle_file(save_path, get_subtitle_postprocess_cfg(db))
+    except Exception:
+        pass
+
+    existing = db.query(Subtitle).filter(Subtitle.file_path == save_path).first()
+    if existing:
+        _trigger_promotion_check(ep.series_id)
+        return best["source"]
+
+    sub = Subtitle(episode_id=ep.id, language=lang, source=best["source"], file_path=save_path, format=ext)
+    db.add(sub)
+    db.commit()
+    _langcheck_after_download(db, sub)
+    _trigger_promotion_check(ep.series_id)
+    # Post-download action
+    post_action = _read_setting("subtitle_post_download_action", db) or "none"
+    if post_action == "auto_sync" or _read_setting("subtitle_auto_sync", db) == "true":
+        _sync_after_download(ep.id)
+    if _read_setting("sonarr_auto_unmonitor_after_download", db) == "true":
+        _auto_unmonitor_episode(ep)
+    return best["source"]
 
 
 # ──────────────────────────────────────────
@@ -352,25 +534,36 @@ def download_best(
 def download_all_series(
     series_id: int,
     background_tasks: BackgroundTasks,
+    force: bool = False,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Queue background download of missing CZ subtitles for every episode in a series."""
+    """Queue background download of missing CZ subtitles for every episode in a series.
+
+    force=True: include episodes that already have subtitles (re-search all).
+    """
     from ..models.series import Series
 
     s = db.query(Series).filter(Series.id == series_id).first()
     if not s:
         raise HTTPException(404, "Series not found")
 
-    already_subbed = _already_subbed_ids(db, "cs")
-    candidates = [
-        ep.id for ep in s.episodes
-        if ep.season_number > 0 and ep.monitored and ep.has_file
-        and ep.id not in already_subbed
-        and not _cs_subtitle_on_disk(ep)
-    ]
+    if force:
+        candidates = [
+            ep.id for ep in s.episodes
+            if ep.season_number > 0 and ep.has_file
+        ]
+    else:
+        already_subbed = _already_subbed_ids(db, "cs")
+        candidates = [
+            ep.id for ep in s.episodes
+            if ep.season_number > 0 and ep.has_file
+            and ep.id not in already_subbed
+            and not _cs_subtitle_on_disk(ep)
+        ]
+
     if not candidates:
-        raise HTTPException(400, "Všechny monitorované epizody již mají CZ titulky")
+        raise HTTPException(400, "Žádné epizody se souborem")
 
     background_tasks.add_task(_download_all_task, series_id, candidates, s.title)
     return {"status": "queued", "count": len(candidates)}
@@ -380,7 +573,7 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
     import time
     from ..database import SessionLocal
     from ..services import job_log
-    from .subtitles import _hiyori, _hns, _kamui, _gensubs, _read_setting, _fetch_bytes, _save_subtitle
+    from .subtitles import _hiyori, _hns, _kamui, _gensubs, _read_setting, _fetch_bytes, _save_subtitle, _get_provider_order
     from ..services.subtitle_utils import extract_subtitle_bytes
     from ..config import get_settings
     from ..models.app_settings import AppSetting
@@ -400,15 +593,9 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
     except Exception:
         download_delay = 2.0
 
-    # Provider priority — read from DB, fallback to hiyori→hns→kamui→gensubs
-    _DEFAULT_PRIORITY = "hiyori,hns,kamui,gensubs"
-    priority_row = db.query(AppSetting).filter(AppSetting.key == "subtitle_provider_priority").first()
-    priority_str  = (priority_row.value if priority_row and priority_row.value else None) or _DEFAULT_PRIORITY
-    sources = [s.strip() for s in priority_str.split(",") if s.strip()]
-    # Ensure all known sources appear (append any that are missing at the end)
-    for _src in ["hiyori", "hns", "kamui", "gensubs"]:
-        if _src not in sources:
-            sources.append(_src)
+    # Provider priority — read from DB (scraper_provider_order > legacy subtitle_provider_priority),
+    # fallback to hiyori→hns→kamui→gensubs. Missing providers are appended automatically.
+    sources = _get_provider_order(db)
 
     # Whether to skip "direct" (cross-site) download links in search results
     skip_ext_row = db.query(AppSetting).filter(AppSetting.key == "subtitle_skip_external_links").first()
@@ -497,10 +684,19 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
                     )
                     db.add(sub)
                     db.commit()
-                    _langcheck_after_download(db, sub)   # detekce SK
+                    lc = _langcheck_after_download(db, sub)   # detekce SK
+                else:
+                    lc = None
                 ok += 1
-                _prog(i + 1, f"✓ {ep_label} ({best['source']})")
-                _msg(f"✓ ({i+1}/{total}) {ep_label} — {ext} z {best['source']}")
+                if lc and lc.get("action") == "fixed":
+                    _prog(i + 1, f"⚠ {ep_label} — jazyk: {lc['from']}→{lc['to']}")
+                    _msg(
+                        f"⚠ ({i+1}/{total}) {ep_label} — detekován {lc['to'].upper()} "
+                        f"místo CS ({lc['conf']:.0%}) — soubor přejmenován"
+                    )
+                else:
+                    _prog(i + 1, f"✓ {ep_label} ({best['source']})")
+                    _msg(f"✓ ({i+1}/{total}) {ep_label} — {ext} z {best['source']}")
 
                 # Auto-sync after bulk download (check setting)
                 if _read_setting("subtitle_auto_sync", db) == "true":
@@ -575,9 +771,14 @@ def download_all_bulk_series(
 
     already_subbed = _already_subbed_ids(db, "cs")
     candidates = []
-    for s in db.query(Series).filter(Series.id.in_(req.series_ids)).all():
+    for s in (
+        db.query(Series)
+        .options(subqueryload(Series.episodes))
+        .filter(Series.id.in_(req.series_ids))
+        .all()
+    ):
         for ep in s.episodes:
-            if (ep.season_number > 0 and ep.monitored and ep.has_file
+            if (ep.season_number > 0 and ep.has_file
                     and ep.id not in already_subbed
                     and not _cs_subtitle_on_disk(ep)):
                 candidates.append(ep.id)
@@ -832,10 +1033,12 @@ def delete_subtitles_by_series(
         f"Hromadné mazání titulků ({len(req.series_ids)} anime, {lang_label})",
     )
     try:
+        from ..models.series import Episode as _Episode
         ep_ids = [
-            ep.id
-            for s in db.query(Series).filter(Series.id.in_(req.series_ids)).all()
-            for ep in s.episodes
+            row[0]
+            for row in db.query(_Episode.id)
+            .filter(_Episode.series_id.in_(req.series_ids))
+            .all()
         ]
         query = db.query(Subtitle).filter(Subtitle.episode_id.in_(ep_ids))
         query = _apply_lang_filter(query, req.language)
@@ -1038,8 +1241,7 @@ def _already_subbed_ids(db: Session, language: str = "cs") -> set[int]:
     from ..routers.settings import get_subtitle_behavior_cfg, _get_setting
     from ..models.series import Subtitle as _Sub
 
-    _CS_LANGS = {"cs", "cze", "cz", "ces"}
-    lang_filter = list(_CS_LANGS) if language == "cs" else [language]
+    lang_filter = list(CS_LANGS) if language == "cs" else [language]
 
     # 1) Always trust non-embedded subtitle DB records
     ids: set[int] = {
@@ -1128,20 +1330,51 @@ def _direct_download(url: str) -> bytes:
 
 
 def _save_subtitle(ep: Episode, data: bytes, language: str, ext: str) -> str:
-    """Write subtitle bytes to disk next to the episode file. Returns save path."""
-    if not ep.file_path:
-        raise HTTPException(400, "Epizoda nemá cestu k souboru — spusť Sonarr sync")
+    """Write subtitle bytes to disk next to the episode file. Returns save path.
+
+    When episode has no file_path (Sonarr hasn't matched the file yet), saves to
+    a fallback temp directory so the download is not blocked.
+    """
     if not data or len(data) < 10:
         raise HTTPException(400, "Stažený soubor titulku je prázdný — zkus jiný zdroj")
 
-    dest = path_resolver.subtitle_path_for(ep.file_path, language, ext)
-    try:
-        path_resolver.write_subtitle(dest, data)
-    except PermissionError as e:
-        raise HTTPException(403, str(e))
-    except Exception as e:
-        raise HTTPException(500, f"Chyba při ukládání titulku: {e}")
+    if ep.file_path:
+        dest = path_resolver.subtitle_path_for(ep.file_path, language, ext)
+        try:
+            path_resolver.write_subtitle(dest, data)
+        except PermissionError as e:
+            raise HTTPException(403, str(e))
+        except Exception as e:
+            raise HTTPException(500, f"Chyba při ukládání titulku: {e}")
+        return dest
 
+    # No file path yet — try series root, fall back to temp dir
+    import re as _re, tempfile as _tmp
+    safe_title = _re.sub(r'[\\/:*?"<>|]', '_', ep.series.title or 'unknown')
+    series_path = ep.series.path if ep.series else None
+    if series_path:
+        # Build a Sonarr-style path so path_resolver can translate it
+        sep = "/" if "/" in series_path else "\\"
+        season_folder = f"Season {ep.season_number:02d}"
+        clean_path = series_path.rstrip("/\\")
+        fake_ep = (
+            f"{clean_path}{sep}{season_folder}{sep}"
+            f"{safe_title}.S{ep.season_number:02d}E{ep.episode_number:02d}.mkv"
+        )
+        dest = path_resolver.subtitle_path_for(fake_ep, language, ext)
+        try:
+            path_resolver.write_subtitle(dest, data)
+            return dest
+        except Exception:
+            pass  # fall through to temp-dir if series-path write fails
+    fallback_dir = os.path.join(_tmp.gettempdir(), "anisubarr_subs", safe_title)
+    os.makedirs(fallback_dir, exist_ok=True)
+    dest = os.path.join(
+        fallback_dir,
+        f"S{ep.season_number:02d}E{ep.episode_number:02d}.{language}.{ext}",
+    )
+    with open(dest, "wb") as f:
+        f.write(data)
     return dest
 
 
@@ -1149,28 +1382,30 @@ def _save_subtitle(ep: Episode, data: bytes, language: str, ext: str) -> str:
 # Lang-check hook — volej po každém uložení subtitlu do DB
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _langcheck_after_download(db, sub) -> None:
+def _langcheck_after_download(db, sub) -> dict | None:
     """
     Okamžitě zkontroluje jazyk čerstvě staženého titulku.
-    Pokud detekuje SK (s dostatečnou jistotou), přejmenuje soubor
+    Pokud detekuje SK/EN (s dostatečnou jistotou), přejmenuje soubor
     a změní language v DB — příští download_missing pak stáhne znovu.
     Spouští se synchronně ale je rychlé (~20 ms čtení souboru).
+    Vrátí dict s výsledkem (action, from, to, conf) nebo None při chybě.
     """
     try:
         from ..services.subtitle_langcheck import check_and_fix_subtitle
         result = check_and_fix_subtitle(db, sub)
         if result.get("action") == "fixed":
             import logging
-            logging.getLogger("anisubarr.subtitles").info(
-                f"[langcheck] EP {sub.episode_id}: "
-                f"staženo jako {result['from']}, detekováno {result['to']} "
-                f"({result['conf']:.0%}) — opraveno"
+            logging.getLogger("anisubarr.subtitles").warning(
+                "[langcheck] EP %s: staženo jako %s, detekováno %s (%.0f%%) — soubor přejmenován, DB opravena",
+                sub.episode_id, result["from"], result["to"], result["conf"] * 100,
             )
+        return result
     except Exception as e:
         import logging
         logging.getLogger("anisubarr.subtitles").warning(
             f"[langcheck] hook selhal pro sub {sub.id}: {e}"
         )
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1200,13 +1435,12 @@ def run_langcheck_endpoint(
 
     dry_run=true jen hlásí co by udělal, nic nepřejmenovává.
     """
-    from ..services.subtitle_langcheck import run_langcheck, LANGCHECK_MIN_CONF
-    min_conf = req.min_conf_pct / 100.0
+    from ..services.subtitle_langcheck import run_langcheck
 
-    result = run_langcheck(
-        db,
+    results = run_langcheck(
+        db=db,
         language_filter=req.language_filter,
         dry_run=req.dry_run,
-        min_conf=min_conf,
+        min_conf=req.min_conf_pct / 100.0,
     )
-    return result
+    return results

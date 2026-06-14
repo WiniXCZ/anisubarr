@@ -1,11 +1,31 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { UserPlus, Trash2, Shield, ShieldOff, UserCheck, UserX, X, Eye, EyeOff } from "lucide-react";
-import { getMe, getUsers, createUser, updateUser, deleteUser } from "../api/client";
+import { UserPlus, Trash2, Shield, X, Eye, EyeOff, Settings2 } from "lucide-react";
+import { getMe, getUsers, createUser, updateUser, deleteUser, updateUserPermissions } from "../api/client";
 import clsx from "clsx";
 
-// ── Toggle přepínač ───────────────────────
+// ── Constants ─────────────────────────────
+
+const PERM_LABELS = {
+  can_download_subtitles: "Stahovat titulky",
+  can_manage_library:     "Spravovat knihovnu",
+  can_edit_subtitles:     "Upravovat titulky",
+  can_run_sync:           "Spouštět synchronizaci",
+  can_manage_requests:    "Spravovat požadavky",
+  can_view_files:         "Prohlížet soubory",
+  can_access_settings:    "Přístup k nastavení",
+};
+
+const DEFAULT_PERMS = Object.fromEntries(Object.keys(PERM_LABELS).map((k) => [k, false]));
+
+const ROLE_META = {
+  viewer: { label: "Viewer", color: "text-muted border-border bg-transparent" },
+  custom: { label: "Custom", color: "text-blue-400 border-blue-400/40 bg-blue-400/5" },
+  admin:  { label: "Admin",  color: "text-accent border-accent/40 bg-accent/5" },
+};
+
+// ── Toggle ────────────────────────────────
 
 function Toggle({ checked, onChange, disabled }) {
   return (
@@ -29,10 +49,33 @@ function Toggle({ checked, onChange, disabled }) {
   );
 }
 
-// ── Modal pro přidání uživatele ───────────
+// ── Role select ───────────────────────────
+
+function RoleSelect({ value, onChange, disabled }) {
+  const meta = ROLE_META[value] ?? ROLE_META.viewer;
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+      className={clsx(
+        "text-xs font-medium px-2 py-1 rounded-md border transition-colors focus:outline-none",
+        "bg-transparent cursor-pointer",
+        meta.color,
+        disabled && "opacity-40 cursor-not-allowed"
+      )}
+    >
+      <option value="viewer">Viewer</option>
+      <option value="custom">Custom</option>
+      <option value="admin">Admin</option>
+    </select>
+  );
+}
+
+// ── Modal — přidat uživatele ───────────────
 
 function AddUserModal({ onClose, onSubmit, isPending }) {
-  const [form, setForm]         = useState({ username: "", password: "", email: "", is_admin: false });
+  const [form, setForm]         = useState({ username: "", password: "", email: "", role: "viewer" });
   const [showPass, setShowPass] = useState(false);
   const [error, setError]       = useState(null);
 
@@ -52,7 +95,7 @@ function AddUserModal({ onClose, onSubmit, isPending }) {
         username: form.username.trim(),
         password: form.password,
         email:    form.email.trim() || null,
-        is_admin: form.is_admin,
+        role:     form.role,
       });
       onClose();
     } catch (err) {
@@ -65,16 +108,12 @@ function AddUserModal({ onClose, onSubmit, isPending }) {
       <div className="bg-surface border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-semibold text-text">Přidat uživatele</h2>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-md text-muted hover:text-text hover:bg-border transition-colors"
-          >
+          <button onClick={onClose} className="p-1.5 rounded-md text-muted hover:text-text hover:bg-border transition-colors">
             <X size={16} />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Username */}
           <div>
             <label className="block text-sm font-medium text-muted mb-1.5">
               Uživatelské jméno <span className="text-red-400">*</span>
@@ -89,7 +128,6 @@ function AddUserModal({ onClose, onSubmit, isPending }) {
             />
           </div>
 
-          {/* Heslo */}
           <div>
             <label className="block text-sm font-medium text-muted mb-1.5">
               Heslo <span className="text-red-400">*</span>
@@ -112,7 +150,6 @@ function AddUserModal({ onClose, onSubmit, isPending }) {
             </div>
           </div>
 
-          {/* Email */}
           <div>
             <label className="block text-sm font-medium text-muted mb-1.5">
               E-mail <span className="text-muted text-xs">(volitelný)</span>
@@ -126,10 +163,25 @@ function AddUserModal({ onClose, onSubmit, isPending }) {
             />
           </div>
 
-          {/* Is admin */}
           <div className="flex items-center justify-between py-1">
-            <span className="text-sm font-medium text-muted">Administrátor</span>
-            <Toggle checked={form.is_admin} onChange={(v) => set("is_admin", v)} />
+            <span className="text-sm font-medium text-muted">Role</span>
+            <div className="flex gap-1.5">
+              {["viewer", "custom", "admin"].map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => set("role", r)}
+                  className={clsx(
+                    "px-3 py-1 text-xs font-medium rounded-md border transition-colors",
+                    form.role === r
+                      ? ROLE_META[r].color
+                      : "text-muted border-border bg-transparent hover:border-muted"
+                  )}
+                >
+                  {ROLE_META[r].label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {error && (
@@ -160,7 +212,7 @@ function AddUserModal({ onClose, onSubmit, isPending }) {
   );
 }
 
-// ── Modal změna hesla ─────────────────────
+// ── Modal — změna hesla ───────────────────
 
 function ChangePasswordModal({ user, onClose, onSubmit, isPending }) {
   const [password, setPassword] = useState("");
@@ -170,10 +222,7 @@ function ChangePasswordModal({ user, onClose, onSubmit, isPending }) {
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
-    if (!password.trim()) {
-      setError("Heslo nesmí být prázdné.");
-      return;
-    }
+    if (!password.trim()) { setError("Heslo nesmí být prázdné."); return; }
     try {
       await onSubmit(user.id, { password });
       onClose();
@@ -232,36 +281,125 @@ function ChangePasswordModal({ user, onClose, onSubmit, isPending }) {
   );
 }
 
+// ── Modal — oprávnění (custom role) ───────
+
+function PermissionsModal({ user, onClose, onSave, isPending }) {
+  const initial = { ...DEFAULT_PERMS, ...(user.permissions ?? {}) };
+  const [perms, setPerms] = useState(initial);
+  const [error, setError] = useState(null);
+
+  function toggle(key) {
+    setPerms((p) => ({ ...p, [key]: !p[key] }));
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError(null);
+    try {
+      await onSave(user.id, perms);
+      onClose();
+    } catch (err) {
+      setError(err.response?.data?.detail ?? "Chyba při ukládání oprávnění.");
+    }
+  }
+
+  const allOn  = Object.values(perms).every(Boolean);
+  const allOff = Object.values(perms).every((v) => !v);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-surface border border-border rounded-xl shadow-2xl w-full max-w-sm mx-4 p-6">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-lg font-semibold text-text">Oprávnění</h2>
+          <button onClick={onClose} className="p-1.5 rounded-md text-muted hover:text-text hover:bg-border transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+        <p className="text-sm text-muted mb-5">
+          Vlastní oprávnění pro <span className="text-text font-medium">{user.username}</span>
+        </p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Quick toggle all */}
+          <div className="flex gap-2 mb-1">
+            <button
+              type="button"
+              onClick={() => setPerms(Object.fromEntries(Object.keys(DEFAULT_PERMS).map((k) => [k, true])))}
+              disabled={allOn}
+              className="text-xs text-accent hover:underline disabled:opacity-30 disabled:no-underline"
+            >
+              Vše povolit
+            </button>
+            <span className="text-muted text-xs">·</span>
+            <button
+              type="button"
+              onClick={() => setPerms({ ...DEFAULT_PERMS })}
+              disabled={allOff}
+              className="text-xs text-muted hover:text-text hover:underline disabled:opacity-30 disabled:no-underline"
+            >
+              Vše zakázat
+            </button>
+          </div>
+
+          <div className="space-y-2.5">
+            {Object.entries(PERM_LABELS).map(([key, label]) => (
+              <label key={key} className="flex items-center gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={perms[key] ?? false}
+                  onChange={() => toggle(key)}
+                  className="w-4 h-4 rounded accent-accent cursor-pointer"
+                />
+                <span className="text-sm text-text group-hover:text-accent transition-colors">{label}</span>
+              </label>
+            ))}
+          </div>
+
+          {error && (
+            <p className="text-sm text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2">{error}</p>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 text-sm rounded-lg border border-border text-muted hover:text-text hover:bg-border transition-colors">
+              Zrušit
+            </button>
+            <button type="submit" disabled={isPending} className="flex-1 px-4 py-2 text-sm rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-50 transition-colors font-medium">
+              {isPending ? "Ukládám…" : "Uložit"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Hlavní stránka ────────────────────────
 
 export default function AdminUsers() {
-  const navigate     = useNavigate();
-  const queryClient  = useQueryClient();
+  const navigate    = useNavigate();
+  const queryClient = useQueryClient();
 
-  const [showAddModal,  setShowAddModal]  = useState(false);
-  const [changePwUser,  setChangePwUser]  = useState(null);   // User objekt pro změnu hesla
-  const [deleteConfirm, setDeleteConfirm] = useState(null);   // id uživatele ke smazání
+  const [showAddModal,   setShowAddModal]   = useState(false);
+  const [changePwUser,   setChangePwUser]   = useState(null);
+  const [permissionsUser, setPermissionsUser] = useState(null);
+  const [deleteConfirm,  setDeleteConfirm]  = useState(null);
 
-  // Načtení aktuálního uživatele pro admin guard a self-check
   const { data: me, isLoading: meLoading } = useQuery({
     queryKey: ["me"],
     queryFn:  () => getMe().then((r) => r.data),
   });
 
-  // Redirect pokud není admin
   if (!meLoading && me && !me.is_admin) {
     navigate("/", { replace: true });
     return null;
   }
 
-  // Načtení seznamu uživatelů
   const { data: users = [], isLoading } = useQuery({
     queryKey: ["users"],
     queryFn:  () => getUsers().then((r) => r.data),
     enabled:  !!me?.is_admin,
   });
 
-  // Mutace
   const createMutation = useMutation({
     mutationFn: createUser,
     onSuccess:  () => queryClient.invalidateQueries({ queryKey: ["users"] }),
@@ -280,17 +418,24 @@ export default function AdminUsers() {
     },
   });
 
-  function handleToggle(user, field) {
-    updateMutation.mutate({ id: user.id, data: { [field]: !user[field] } });
+  const permsMutation = useMutation({
+    mutationFn: ({ id, data }) => updateUserPermissions(id, data),
+    onSuccess:  () => queryClient.invalidateQueries({ queryKey: ["users"] }),
+  });
+
+  function handleRoleChange(user, newRole) {
+    updateMutation.mutate({ id: user.id, data: { role: newRole } });
+    if (newRole === "custom") {
+      setPermissionsUser(user);
+    }
   }
 
-  // Loading state
+  function handleToggleActive(user) {
+    updateMutation.mutate({ id: user.id, data: { is_active: !user.is_active } });
+  }
+
   if (meLoading || (!me && !meLoading)) {
-    return (
-      <div className="flex items-center justify-center py-24 text-muted text-sm">
-        Načítám…
-      </div>
-    );
+    return <div className="flex items-center justify-center py-24 text-muted text-sm">Načítám…</div>;
   }
 
   return (
@@ -324,23 +469,21 @@ export default function AdminUsers() {
               <tr className="border-b border-border bg-bg/50">
                 <th className="text-left text-xs font-medium text-muted px-4 py-3 uppercase tracking-wide">Uživatel</th>
                 <th className="text-left text-xs font-medium text-muted px-4 py-3 uppercase tracking-wide hidden sm:table-cell">E-mail</th>
-                <th className="text-center text-xs font-medium text-muted px-4 py-3 uppercase tracking-wide">Admin</th>
+                <th className="text-center text-xs font-medium text-muted px-4 py-3 uppercase tracking-wide">Role</th>
                 <th className="text-center text-xs font-medium text-muted px-4 py-3 uppercase tracking-wide">Aktivní</th>
                 <th className="text-right text-xs font-medium text-muted px-4 py-3 uppercase tracking-wide">Akce</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {users.map((user) => {
-                const isSelf      = user.id === me?.id;
-                const isUpdating  = updateMutation.isPending;
+                const isSelf     = user.id === me?.id;
+                const isUpdating = updateMutation.isPending && updateMutation.variables?.id === user.id;
+                const role       = user.role ?? "viewer";
 
                 return (
                   <tr
                     key={user.id}
-                    className={clsx(
-                      "transition-colors hover:bg-bg/40",
-                      !user.is_active && "opacity-50"
-                    )}
+                    className={clsx("transition-colors hover:bg-bg/40", !user.is_active && "opacity-50")}
                   >
                     {/* Username */}
                     <td className="px-4 py-3">
@@ -359,14 +502,23 @@ export default function AdminUsers() {
                       <span className="text-sm text-muted">{user.email ?? "—"}</span>
                     </td>
 
-                    {/* is_admin toggle */}
-                    <td className="px-4 py-3 text-center">
-                      <div className="flex justify-center" title={isSelf ? "Nemůžeš odebrat sám sobě admin práva" : undefined}>
-                        <Toggle
-                          checked={user.is_admin}
-                          onChange={() => handleToggle(user, "is_admin")}
+                    {/* Role */}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <RoleSelect
+                          value={role}
+                          onChange={(newRole) => handleRoleChange(user, newRole)}
                           disabled={isUpdating || isSelf}
                         />
+                        {role === "custom" && (
+                          <button
+                            onClick={() => setPermissionsUser(user)}
+                            title="Spravovat oprávnění"
+                            className="p-1 rounded text-blue-400/60 hover:text-blue-400 hover:bg-blue-400/10 transition-colors"
+                          >
+                            <Settings2 size={13} />
+                          </button>
+                        )}
                       </div>
                     </td>
 
@@ -375,7 +527,7 @@ export default function AdminUsers() {
                       <div className="flex justify-center" title={isSelf ? "Nemůžeš deaktivovat vlastní účet" : undefined}>
                         <Toggle
                           checked={user.is_active}
-                          onChange={() => handleToggle(user, "is_active")}
+                          onChange={() => handleToggleActive(user)}
                           disabled={isUpdating || isSelf}
                         />
                       </div>
@@ -384,7 +536,6 @@ export default function AdminUsers() {
                     {/* Akce */}
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        {/* Změna hesla */}
                         <button
                           onClick={() => setChangePwUser(user)}
                           title="Změnit heslo"
@@ -392,8 +543,6 @@ export default function AdminUsers() {
                         >
                           <Shield size={14} />
                         </button>
-
-                        {/* Smazat */}
                         <button
                           onClick={() => setDeleteConfirm(user.id)}
                           disabled={isSelf}
@@ -432,7 +581,17 @@ export default function AdminUsers() {
           user={changePwUser}
           onClose={() => setChangePwUser(null)}
           onSubmit={(id, data) => updateMutation.mutateAsync({ id, data })}
-          isPending={updateMutation.isPending}
+          isPending={updateMutation.isPending && updateMutation.variables?.id === changePwUser.id}
+        />
+      )}
+
+      {/* Modal — oprávnění */}
+      {permissionsUser && (
+        <PermissionsModal
+          user={permissionsUser}
+          onClose={() => setPermissionsUser(null)}
+          onSave={(id, data) => permsMutation.mutateAsync({ id, data })}
+          isPending={permsMutation.isPending}
         />
       )}
 
@@ -449,10 +608,7 @@ export default function AdminUsers() {
               bude trvale odstraněn.
             </p>
             <div className="flex gap-2">
-              <button
-                onClick={() => setDeleteConfirm(null)}
-                className="flex-1 px-4 py-2 text-sm rounded-lg border border-border text-muted hover:text-text hover:bg-border transition-colors"
-              >
+              <button onClick={() => setDeleteConfirm(null)} className="flex-1 px-4 py-2 text-sm rounded-lg border border-border text-muted hover:text-text hover:bg-border transition-colors">
                 Zrušit
               </button>
               <button

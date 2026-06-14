@@ -34,3 +34,13 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code local session data / worktrees
+.claude/
+
+# Vite temp config files
+vite.config.js.timestamp-*.mjs
+
+# Logs / temp output
+backend/uvicorn_log.txt
+check2_result.txt

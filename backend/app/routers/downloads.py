@@ -18,23 +18,11 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
 from ..models.user import User
+from ..utils.settings_helper import read_setting as _read_setting
 
 log = logging.getLogger("anisubarr.downloads")
 
 router = APIRouter(prefix="/api/downloads", tags=["downloads"])
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _read_setting(key: str, db) -> Optional[str]:
-    try:
-        from ..models.app_settings import AppSetting
-        row = db.query(AppSetting).filter(AppSetting.key == key).first()
-        if row and row.value:
-            return row.value
-    except Exception:
-        pass
-    return os.environ.get(key.upper())
 
 
 def _human_size(b: Optional[int]) -> str:

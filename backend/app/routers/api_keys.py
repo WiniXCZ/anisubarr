@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import secrets
 from datetime import datetime
 
@@ -12,14 +11,9 @@ from ..database import get_db
 from ..deps import get_current_user
 from ..models.api_key import ApiKey
 from ..models.user import User
+from ..utils.auth_utils import API_KEY_PREFIX, hash_api_key
 
 router = APIRouter(prefix="/api/api-keys", tags=["api-keys"])
-
-PREFIX = "ansk_"
-
-
-def _hash(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
 
 
 class CreateKeyRequest(BaseModel):
@@ -61,12 +55,12 @@ def create_key(
 ):
     """Vygeneruje nový API klíč. Plaintext je vrácen JEDNOU."""
     raw_token = secrets.token_urlsafe(32)
-    full_key  = PREFIX + raw_token
+    full_key  = API_KEY_PREFIX + raw_token
 
     key = ApiKey(
         user_id    = current_user.id,
         name       = req.name,
-        key_hash   = _hash(full_key),
+        key_hash   = hash_api_key(full_key),
         key_prefix = full_key[:8],
     )
     db.add(key)

@@ -2,16 +2,19 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { ToastProvider } from "./context/ToastContext";
 import ToastContainer from "./components/Toast";
 import Login from "./pages/Login";
+import Dashboard from "./pages/Dashboard";
 import Library from "./pages/Library";
 import SeriesDetail from "./pages/SeriesDetail";
-import Schedule from "./pages/Schedule";
 import Calendar from "./pages/Calendar";
 import Files from "./pages/Files";
 import Settings from "./pages/Settings";
 import AdminUsers from "./pages/AdminUsers";
 import Requests from "./pages/Requests";
 import SubtitleEditorPage from "./pages/SubtitleEditorPage";
+import PlayerPage from "./pages/PlayerPage";
+import Discover from "./pages/Discover";
 import Navbar from "./components/Navbar";
+import GlobalSearch from "./components/GlobalSearch";
 import { T } from "./theme";
 
 function RequireAuth({ children }) {
@@ -38,16 +41,19 @@ export default function App() {
                 overflow: 'hidden',
               }}>
                 <Navbar />
+                <GlobalSearch />
                 <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                   <Routes>
-                    <Route path="/"           element={<Library />} />
+                    <Route path="/"           element={<Dashboard />} />
+                    <Route path="/library"    element={<Library />} />
                     <Route path="/series/:id" element={<SeriesDetail />} />
-                    <Route path="/schedule"   element={<Schedule />} />
                     <Route path="/calendar"   element={<Calendar />} />
                     <Route path="/requests"   element={<Requests />} />
                     <Route path="/files"      element={<Files />} />
                     <Route path="/settings"   element={<Settings />} />
                     <Route path="/subtitles"  element={<SubtitleEditorPage />} />
+                    <Route path="/player/:seriesId/:episodeId" element={<PlayerPage />} />
+                    <Route path="/discover"    element={<Discover />} />
                     <Route path="/admin/users" element={<AdminUsers />} />
                     <Route path="*"           element={<Navigate to="/" replace />} />
                   </Routes>
