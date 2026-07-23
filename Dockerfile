@@ -26,7 +26,10 @@ FROM python:3.12-slim
 
 # ffmpeg: subtitle/audio extraction (used by both alass and ffsubsync fallback)
 # curl: used by the Docker HEALTHCHECK
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl \
+# build-essential: webrtcvad (a transitive dep of ffsubsync) ships no prebuilt
+# wheel for any Python version — pip always compiles its C extension from
+# source, which fails on python:3.12-slim without a compiler present.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/backend
