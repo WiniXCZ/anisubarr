@@ -16,6 +16,7 @@ Webová aplikace pro správu českých anime titulků. Propojuje Sonarr, Emby/Je
 - **Propojení** — testování připojení k Sonarru, Overseerru, Emby a SMB ze záložky Nastavení
 - **API klíče** — generování a správa API klíčů pro headless přístup
 - **Správa uživatelů** — více uživatelů s RBAC (admin / běžný uživatel)
+- **Vícejazyčné rozhraní** — čeština / slovenština / angličtina, přepínatelné za běhu (Nastavení → Jazyk rozhraní)
 
 ---
 
@@ -118,9 +119,35 @@ API dokumentace je dostupná na `http://localhost:8000/api/docs`.
 
 ### Production (Docker)
 
+Nejjednodušší cesta je použít předbuildovaný image z GHCR — `docker-compose.yml`
+v repu je na to už nastavený (`image: ghcr.io/winixcz/anisubarr:latest`),
+stačí doplnit `.env` a spustit:
+
 ```bash
-docker-compose up -d
+cp .env.example .env
+# uprav .env — hlavně JWT_SECRET, SONARR_HOST/API_KEY, cesty k médiím
+docker compose up -d
 ```
+
+Image se automaticky přebuildí a publikuje na GHCR při každém pushi do `main`
+(viz `.github/workflows/docker.yml`), takže `docker compose pull && docker compose up -d`
+stačí na aktualizaci.
+
+Pro lokální vývoj/build ze zdrojáků místo GHCR image odkomentuj `build: .`
+v `docker-compose.yml` a zakomentuj `image:` řádek.
+
+### Unraid
+
+Přidej kontejner ručně přes **Docker → Add Container**:
+
+- **Repository**: `ghcr.io/winixcz/anisubarr:latest`
+- **Porty**: `8000` (admin UI + API), `8090` (veřejný web, volitelné)
+- **Cesty**: `/app/backend/data` → `/mnt/user/appdata/anisubarr/data` (databáze), `/media` → tvoje sdílené anime úložiště
+- **Proměnné prostředí**: viz `.env.example`
+
+Nově vytvořený GHCR balíček je defaultně **private** — pokud ho Unraid nemůže
+stáhnout, nastav ho na public v **GitHub → Packages → anisubarr → Package settings**,
+nebo přidej registry credentials v Unraidu.
 
 ---
 
