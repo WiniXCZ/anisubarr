@@ -1,0 +1,166 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Global animation keyframes ──────────────────────────────────────── */
+@keyframes fadeInBackdrop {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes scaleInModal {
+  from { opacity: 0; transform: scale(0.96) translateY(-6px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slide-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+@layer base {
+  :root { scroll-behavior: smooth; }
+
+  html {
+    background-color: #0e1220;
+    color: #e8e9f2;
+    font-family: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  img, video { max-width: 100%; display: block; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: #0a0d18; }
+  ::-webkit-scrollbar-thumb { background: #1d2237; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #a78bfa; }
+
+  /* Input / select base reset */
+  input, select, textarea {
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+  }
+
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+  }
+}
+
+@layer utilities {
+  /* ── Animation helpers ── */
+  .animate-fade-backdrop { animation: fadeInBackdrop 0.15s ease-out; }
+  .animate-scale-modal   { animation: scaleInModal   0.18s ease-out; }
+  .animate-slide-down    { animation: slideDown      0.15s ease-out; }
+
+  /* ── Skeleton loading ── */
+  .skeleton {
+    background: linear-gradient(90deg, #161a2a 25%, #252b42 50%, #161a2a 75%);
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s infinite;
+    border-radius: 6px;
+  }
+
+  /* ── Nav icon buttons (hover via CSS) ── */
+  .nav-icon-btn {
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .nav-icon-btn:hover {
+    background: rgba(255,255,255,0.07) !important;
+    color: #e8e9f2 !important;
+    border-color: rgba(255,255,255,0.14) !important;
+  }
+
+  /* ── Error banner ── */
+  .error-banner {
+    background: rgba(239,68,68,0.12);
+    color: #ef4444;
+    border: 1px solid rgba(239,68,68,0.25);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font: 500 13px "Space Grotesk";
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* Text utilities */
+  .font-mono { font-family: "JetBrains Mono", ui-monospace, monospace !important; }
+  .font-jp   { font-family: "Noto Sans JP", sans-serif !important; }
+
+  /* Line clamp */
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Design system button helpers */
+  .btn-primary {
+    background: #a78bfa;
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    padding: 6px 12px;
+    font: 600 12px/1 "Space Grotesk";
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(167,139,250,0.33);
+    transition: opacity 0.12s;
+  }
+  .btn-primary:hover { opacity: 0.88; }
+  .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .btn-ghost {
+    background: transparent;
+    color: rgba(232,233,242,0.62);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 7px;
+    padding: 5px 9px;
+    font: 500 12px/1 "Space Grotesk";
+    cursor: pointer;
+    transition: border-color 0.12s, color 0.12s;
+  }
+  .btn-ghost:hover {
+    color: #e8e9f2;
+    border-color: rgba(255,255,255,0.18);
+  }
+
+  .btn-sub {
+    background: #1d2237;
+    color: #e8e9f2;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 7px;
+    padding: 5px 10px;
+    font: 500 12px/1 "Space Grotesk";
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .btn-sub:hover { background: #252b42; }
+
+  /* Animations */
+  .fade-in  { animation: fade-in  0.15s ease-out; }
+  .slide-up { animation: slide-up 0.2s  ease-out; }
+
+  /* Status pill */
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 99px;
+    font: 600 10.5px/1 "JetBrains Mono";
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+}

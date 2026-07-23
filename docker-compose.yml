@@ -1,0 +1,55 @@
+version: "3.9"
+
+services:
+  anisubarr:
+    # Pulled from GHCR (built automatically by .github/workflows/docker.yml on
+    # every push to main/master) — this is what lets Unraid "check for
+    # updates" like any other Docker app. For local development, comment this
+    # line out and uncomment `build: .` below to build from source instead.
+    image: ghcr.io/winixcz/anisubarr:latest
+    # build: .
+    container_name: anisubarr
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    ports:
+      - "8000:8000"                    # admin UI + full API (login required)
+      - "${PUBLIC_SITE_HOST_PORT:-8090}:8090"   # public visitor site (read-only, no login)
+    volumes:
+      - ./data:/app/backend/data             # SQLite database
+      # Mount your media share here. The container path must match PATH_LOCAL_PREFIX.
+      # Unraid example: /mnt/user is where all shares live.
+      - ${UNRAID_MEDIA_PATH:-/mnt/user}:/media:rw
+      # Fallback mount for shares whose effective PATH_LOCAL_PREFIX+relative path
+      # doubles up (e.g. /media/media/...) and doesn't resolve under /mnt/user
+      # directly. On this host the real media lives under /mnt/user/data, so
+      # mount that here too and let path_resolver fall back to it.
+      - ${UNRAID_CACHE_PATH:-/mnt/user/data}:/cache:rw
+    environment:
+      - DATABASE_URL=sqlite:///./data/anisubarr.db
+      - SONARR_HOST=${SONARR_HOST}
+      - SONARR_API_KEY=${SONARR_API_KEY}
+      - OLLAMA_HOST=${OLLAMA_HOST}
+      - OLLAMA_MODEL_TRANSLATE=${OLLAMA_MODEL_TRANSLATE}
+      - JWT_SECRET=${JWT_SECRET}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - FFMPEG_PATH=ffmpeg
+      - FFPROBE_PATH=ffprobe
+      - ALASS_PATH=alass
+      # Path mapping — Docker: strip /data, replace with /media
+      - PATH_SONARR_PREFIX=${PATH_SONARR_PREFIX:-/data}
+      - PATH_LOCAL_PREFIX=${PATH_LOCAL_PREFIX:-/media}
+      # Fallback prefix for cache-only shares (see /cache mount above)
+      - PATH_CACHE_PREFIX=${PATH_CACHE_PREFIX:-/cache}
+      # Public visitor site — internal container port (see PUBLIC_SITE_HOST_PORT
+      # above for the host-side mapping). Set to 0 to disable the site entirely.
+      - PUBLIC_PORT=${PUBLIC_PORT:-8090}
+    env_file:
+      - .env
+
+networks:
+  default:
+    name: anisubarr-net

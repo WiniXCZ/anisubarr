@@ -1,0 +1,13 @@
+**/.venv
+**/__pycache__
+**/*.pyc
+backend/anisubarr.db
+backend/*.log
+backend/backend.log
+frontend/node_modules
+frontend/dist
+frontend/*.log
+frontend/vite.config.js.timestamp-*
+.git
+.env
+*.md

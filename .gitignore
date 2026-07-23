@@ -1,0 +1,63 @@
+# ── Secrets & local config ──────────────────────────────────────────
+.env
+*.env
+!.env.example
+
+# ── Python ───────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ── Database (never commit real user data) ──────────────────────────
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3
+backend/data/
+data/
+
+# ── Node / frontend build ───────────────────────────────────────────
+frontend/node_modules/
+node_modules/
+frontend/dist/
+dist/
+.cache/
+vite.config.js.timestamp-*
+
+# ── Logs ─────────────────────────────────────────────────────────────
+*.log
+backend/uvicorn_log.txt
+
+# ── IDE / OS cruft ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.user
+.DS_Store
+Thumbs.db
+
+# ── Claude Code local session data ──────────────────────────────────
+.claude/
+
+# ── Leftover v1 dev cruft (not deleted from disk, just never tracked) ─
+*.bat
+*.vbs
+*.ps1
+docs/
+v1/
+tools/
+AUDIT_REPORT.md
+INSTALL.md
+PRISMARR_FEATURES.md
+TODO.md
+dashboard_*.yaml
+*.bak
+check2_result.txt
+health_result.txt
+_write_test_tmp.txt

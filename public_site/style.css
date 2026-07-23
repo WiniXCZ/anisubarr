@@ -1,0 +1,234 @@
+:root {
+  --bg: #0e1220;
+  --panel: #161a2a;
+  --panel2: #1d2237;
+  --border: rgba(255,255,255,0.06);
+  --border-strong: rgba(255,255,255,0.12);
+  --text: #e8e9f2;
+  --text-dim: rgba(232,233,242,0.62);
+  --text-mute: rgba(232,233,242,0.38);
+  --accent: #a78bfa;
+  --accent2: #22d3ee;
+  --accent-soft: rgba(167,139,250,0.16);
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --err: #ef4444;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 22px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--accent);
+}
+
+.btn-accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid rgba(167,139,250,0.3);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font: 600 13px "Space Grotesk", sans-serif;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-accent:hover { background: rgba(167,139,250,0.28); }
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  padding: 14px 22px 0;
+  flex-wrap: wrap;
+}
+
+.tab {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font: 600 13px "Space Grotesk", sans-serif;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.tab:hover { color: var(--text); }
+.tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: rgba(167,139,250,0.35);
+}
+
+main {
+  padding: 20px 22px 60px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s;
+  display: flex;
+  flex-direction: column;
+}
+.card:hover { transform: translateY(-3px); border-color: var(--border-strong); }
+
+.card-poster {
+  width: 100%;
+  aspect-ratio: 2/3;
+  object-fit: cover;
+  background: var(--panel2);
+  display: block;
+}
+.card-poster-placeholder {
+  width: 100%;
+  aspect-ratio: 2/3;
+  background: var(--panel2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-mute);
+  font-size: 11px;
+  text-align: center;
+  padding: 8px;
+}
+
+.card-body { padding: 10px 11px; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.card-title {
+  font: 600 13px "Space Grotesk", sans-serif;
+  color: var(--text);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card-meta { font: 500 11px "Space Grotesk", sans-serif; color: var(--text-mute); }
+
+.pill {
+  display: inline-block;
+  font: 600 10px "Space Grotesk", sans-serif;
+  padding: 2px 7px;
+  border-radius: 99px;
+  width: fit-content;
+}
+.pill-ok    { background: rgba(34,197,94,0.15); color: var(--ok); }
+.pill-warn  { background: rgba(245,158,11,0.15); color: var(--warn); }
+.pill-err   { background: rgba(239,68,68,0.15); color: var(--err); }
+
+.progress-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--panel2);
+  overflow: hidden;
+}
+.progress-bar > div { height: 100%; background: var(--accent); }
+
+.empty, .loading {
+  text-align: center;
+  color: var(--text-mute);
+  padding: 60px 20px;
+  font: 500 14px "Space Grotesk", sans-serif;
+}
+.hidden { display: none !important; }
+
+.footer {
+  text-align: center;
+  padding: 20px;
+  color: var(--text-mute);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* Modal */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  padding: 24px;
+  max-width: 380px;
+  width: 100%;
+  position: relative;
+}
+.modal-wide { max-width: 640px; max-height: 85vh; overflow-y: auto; }
+.modal h2 { margin: 0 0 8px; font-size: 18px; color: var(--text); }
+.modal p { color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+.modal-close {
+  position: absolute; top: 14px; right: 14px;
+  background: transparent; border: none; color: var(--text-mute);
+  font-size: 22px; cursor: pointer; line-height: 1;
+}
+.modal-close:hover { color: var(--text); }
+
+#subscribe-form { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+#subscribe-email {
+  background: var(--panel2);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  font: 500 13px "Space Grotesk", sans-serif;
+}
+.subscribe-status { font-size: 12px; margin-top: 8px; min-height: 16px; }
+.subscribe-status.ok { color: var(--ok); }
+.subscribe-status.err { color: var(--err); }
+
+.detail-header { display: flex; gap: 16px; margin-bottom: 14px; }
+.detail-poster { width: 130px; border-radius: 8px; flex-shrink: 0; object-fit: cover; }
+.detail-title { font: 700 19px "Space Grotesk", sans-serif; color: var(--text); margin: 0 0 6px; }
+.detail-overview { font-size: 13px; line-height: 1.6; color: var(--text-dim); }
+.detail-genres { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.genre-pill {
+  font: 600 10px "Space Grotesk", sans-serif;
+  background: var(--panel2); color: var(--text-dim);
+  padding: 3px 8px; border-radius: 99px;
+}
+
+@media (max-width: 560px) {
+  .grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+  .topbar { padding: 12px 14px; }
+  .tabs { padding: 12px 14px 0; }
+  main { padding: 16px 14px 40px; }
+  .detail-header { flex-direction: column; }
+  .detail-poster { width: 100%; max-width: 200px; }
+}

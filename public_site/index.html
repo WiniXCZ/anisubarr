@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Anisubarr</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="4" width="20" height="14" rx="2"/>
+        <line x1="8" y1="21" x2="16" y2="21"/>
+        <line x1="12" y1="18" x2="12" y2="21"/>
+      </svg>
+      <span>Anisubarr</span>
+    </div>
+    <button id="subscribe-open" class="btn-accent">Odebírat novinky</button>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="published">Zveřejněné</button>
+    <button class="tab" data-tab="upcoming">Připravované</button>
+    <button class="tab" data-tab="requested">Zažádáno</button>
+    <button class="tab" data-tab="issues">Nahlášené problémy</button>
+  </nav>
+
+  <main id="content">
+    <div id="grid" class="grid"></div>
+    <div id="empty" class="empty hidden">Zatím nic k zobrazení.</div>
+    <div id="loading" class="loading hidden">Načítám…</div>
+  </main>
+
+  <footer class="footer">
+    <span>Anisubarr — anime titulky. Tato stránka je jen pro čtení.</span>
+  </footer>
+
+  <!-- Subscribe modal -->
+  <div id="subscribe-modal" class="modal-backdrop hidden">
+    <div class="modal">
+      <button id="subscribe-close" class="modal-close">&times;</button>
+      <h2>Odebírat novinky</h2>
+      <p>Dostaneš email, když přibude nová zveřejněná série.</p>
+      <form id="subscribe-form">
+        <input type="email" id="subscribe-email" placeholder="tvuj@email.cz" required>
+        <button type="submit" class="btn-accent">Přihlásit se k odběru</button>
+      </form>
+      <p id="subscribe-status" class="subscribe-status"></p>
+    </div>
+  </div>
+
+  <!-- Detail modal -->
+  <div id="detail-modal" class="modal-backdrop hidden">
+    <div class="modal modal-wide">
+      <button id="detail-close" class="modal-close">&times;</button>
+      <div id="detail-content"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
