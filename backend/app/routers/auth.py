@@ -68,6 +68,17 @@ class TokenResponse(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+@router.get("/setup-status")
+def setup_status(db: Session = Depends(get_db)) -> dict:
+    """
+    Public, unauthenticated check the frontend uses to decide whether to show
+    the first-run setup wizard (account + core service config) instead of the
+    plain login screen. True exactly when /register would let someone in
+    without a token — i.e. the users table is empty.
+    """
+    return {"needs_setup": db.query(User).count() == 0}
+
+
 @router.post("/register", status_code=201)
 def register(
     req: RegisterRequest,

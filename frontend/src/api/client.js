@@ -12,12 +12,19 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Redirect to login on 401 — but NOT for the login endpoint itself
+// Redirect to login on 401 — but NOT for the login endpoint itself, and NOT
+// if we're already on /login. Without that second check, any unauthenticated
+// request made from the login page itself (e.g. I18nProvider's app-settings
+// fetch, which 401s on purpose pre-login) would set window.location.href to
+// the page we're already on — that's still a full hard navigation, so it
+// reloads immediately, refires the same request, 401s again, and repeats
+// forever (looks like the page is stuck refreshing itself).
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     const isLoginEndpoint = err.config?.url?.includes("/auth/token");
-    if (err.response?.status === 401 && !isLoginEndpoint) {
+    const isOnLoginPage = window.location.pathname === "/login";
+    if (err.response?.status === 401 && !isLoginEndpoint && !isOnLoginPage) {
       localStorage.removeItem("token");
       window.location.href = "/login";
     }
@@ -35,6 +42,8 @@ export const login = (username, password) => {
 
 export const register = (username, password, email) =>
   api.post("/auth/register", { username, password, email });
+
+export const getSetupStatus = () => api.get("/auth/setup-status");
 
 export const getMe = () => api.get("/auth/me");
 

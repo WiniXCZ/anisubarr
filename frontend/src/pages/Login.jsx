@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { login } from "../api/client";
+import { login, register } from "../api/client";
 import { T } from "../theme";
 import { useT } from "../i18n/I18nContext";
 import LangSwitcher from "../components/LangSwitcher";
@@ -10,6 +10,8 @@ export default function Login() {
   const t = useT();
   const usernameRef = useRef(null);
   const passwordRef = useRef(null);
+  const emailRef = useRef(null);
+  const [mode,     setMode]      = useState("login"); // "login" | "register"
   const [error,    setError]    = useState("");
   const [loading,  setLoading]  = useState(false);
 
@@ -22,6 +24,14 @@ export default function Login() {
     const u = usernameRef.current?.value ?? "";
     const p = passwordRef.current?.value ?? "";
     try {
+      if (mode === "register") {
+        const em = emailRef.current?.value || undefined;
+        await register(u, p, em);
+        // Registering (only possible pre-auth when the DB has zero users —
+        // see backend/app/routers/auth.py) makes this account admin. Log
+        // straight in with the same credentials rather than bouncing the
+        // person back to a second form.
+      }
       const res = await login(u, p);
       localStorage.setItem("token", res.data.access_token);
       navigate("/");
@@ -59,7 +69,7 @@ export default function Login() {
           </svg>
           <div style={{ font: '700 22px "Space Grotesk"', color: T.text }}>{t("login_title")}</div>
           <div style={{ font: '500 13px "Space Grotesk"', color: T.textMute, marginTop: 4 }}>
-            {t("login_subtitle")}
+            {mode === "register" ? t("login_register_title") : t("login_subtitle")}
           </div>
         </div>
 
@@ -89,8 +99,19 @@ export default function Login() {
               {t("login_password")}
             </label>
             <input ref={passwordRef} type="password" name="password"
-              autoComplete="current-password" placeholder="••••••••" style={inp}/>
+              autoComplete={mode === "register" ? "new-password" : "current-password"}
+              placeholder="••••••••" style={inp}/>
           </div>
+
+          {mode === "register" && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ font: '500 12px "Space Grotesk"', color: T.textDim }}>
+                {t("login_email_optional")}
+              </label>
+              <input ref={emailRef} type="email" name="email"
+                autoComplete="email" placeholder="you@example.com" style={inp}/>
+            </div>
+          )}
 
           <button type="submit" disabled={loading} style={{
             marginTop: 4, padding: '10px 0',
@@ -98,8 +119,30 @@ export default function Login() {
             borderRadius: 8, font: '600 14px "Space Grotesk"', cursor: 'pointer',
             opacity: loading ? 0.6 : 1,
           }}>
-            {loading ? t("login_submitting") : t("login_submit")}
+            {mode === "register"
+              ? (loading ? t("login_register_submitting") : t("login_register_submit"))
+              : (loading ? t("login_submitting") : t("login_submit"))}
           </button>
+
+          <div style={{ textAlign: 'center', font: '500 13px "Space Grotesk"', color: T.textMute }}>
+            {mode === "login" ? (
+              <>
+                {t("login_register_prompt")}{" "}
+                <button type="button" onClick={() => { setMode("register"); setError(""); }}
+                  style={{ background: 'none', border: 'none', color: T.accent, cursor: 'pointer', font: 'inherit', padding: 0 }}>
+                  {t("login_register_link")}
+                </button>
+              </>
+            ) : (
+              <>
+                {t("login_have_account")}{" "}
+                <button type="button" onClick={() => { setMode("login"); setError(""); }}
+                  style={{ background: 'none', border: 'none', color: T.accent, cursor: 'pointer', font: 'inherit', padding: 0 }}>
+                  {t("login_login_link")}
+                </button>
+              </>
+            )}
+          </div>
         </form>
       </div>
     </div>
