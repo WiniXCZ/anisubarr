@@ -3,7 +3,6 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { getJobs } from "../api/client";
 import JobsPanel from "./JobsPanel";
-import LangSwitcher from "./LangSwitcher";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useT } from "../i18n/I18nContext";
 import { T } from "../theme";
@@ -151,7 +150,6 @@ export default function Navbar() {
               borderTop: `1px solid ${T.borderStrong}`,
               display: "flex", flexDirection: "column", gap: 8,
             }}>
-              <LangSwitcher compact/>
               <div style={{ display: "flex", gap: 8 }}>
                 <button
                   onClick={() => { setMenuOpen(false); setJobsOpen(v => !v); }}
@@ -254,8 +252,6 @@ export default function Navbar() {
 
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {navBtn("/subtitles", ICONS.subs, t("nav_subtitles"))}
-
-          <LangSwitcher/>
 
           <button
             onClick={() => setJobsOpen(v => !v)}
