@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { login, register } from "../api/client";
 import { T } from "../theme";
 import { useT } from "../i18n/I18nContext";
-import LangSwitcher from "../components/LangSwitcher";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -55,9 +54,6 @@ export default function Login() {
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
       position: 'relative',
     }}>
-      <div style={{ position: 'absolute', top: 16, right: 16 }}>
-        <LangSwitcher/>
-      </div>
       <div style={{ width: '100%', maxWidth: 360 }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <svg width={44} height={44} viewBox="0 0 24 24" fill="none"
