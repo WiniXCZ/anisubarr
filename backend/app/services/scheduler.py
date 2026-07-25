@@ -152,6 +152,7 @@ def job_download_missing():
                     source=best["source"],
                     file_path=save_path,
                     format=ext,
+                    downloaded_at=datetime.now(timezone.utc),
                 )
                 db.add(sub)
                 db.commit()
@@ -610,8 +611,10 @@ JOB_REGISTRY: dict[str, dict] = {
 
 def _build_trigger(job_row):
     iv = job_row.interval or "daily"
-    h  = job_row.hour   or 3
-    m  = job_row.minute or 0
+    # Use `is None` checks, not `or` — hour 0 (midnight) and minute 0 are valid
+    # values that `or` would wrongly replace with the defaults.
+    h  = job_row.hour   if job_row.hour   is not None else 3
+    m  = job_row.minute if job_row.minute is not None else 0
 
     if iv == "30s":
         return IntervalTrigger(seconds=30, start_date=datetime.now(timezone.utc))

@@ -18,8 +18,11 @@ Endpoints:
 
 import json
 import logging
+import time
+from collections import defaultdict
+from threading import Lock
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -28,6 +31,40 @@ from ..database import get_db
 log = logging.getLogger("anisubarr.public")
 
 router = APIRouter(prefix="/api/public", tags=["public"])
+
+# ── Rate limiting for the unauthenticated subscribe endpoint ──────────────────
+# This endpoint is reachable by anyone on the public port; without a limit it
+# can be used to flood the subscribers table. Simple in-memory per-IP window.
+_sub_rate_lock = Lock()
+_sub_attempts: dict[str, list[float]] = defaultdict(list)
+_SUB_RATE_WINDOW = 3600   # seconds
+_SUB_RATE_LIMIT = 5       # subscribe calls per IP per window
+_SUB_MAX_TRACKED_IPS = 10_000
+
+
+def _client_ip(request: Request) -> str:
+    return (
+        request.headers.get("X-Real-IP")
+        or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+
+
+def _check_subscribe_rate(ip: str) -> None:
+    now = time.monotonic()
+    with _sub_rate_lock:
+        recent = [t for t in _sub_attempts[ip] if now - t < _SUB_RATE_WINDOW]
+        if len(recent) >= _SUB_RATE_LIMIT:
+            _sub_attempts[ip] = recent
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Příliš mnoho pokusů o přihlášení k odběru. Zkuste to později.",
+            )
+        recent.append(now)
+        _sub_attempts[ip] = recent
+        if len(_sub_attempts) > _SUB_MAX_TRACKED_IPS:
+            for k in [k for k, v in _sub_attempts.items() if not v]:
+                del _sub_attempts[k]
 
 
 def _display_title(s) -> str:
@@ -131,7 +168,8 @@ class SubscribeBody(BaseModel):
 
 
 @router.post("/subscribe", status_code=201)
-def subscribe(body: SubscribeBody, db: Session = Depends(get_db)):
+def subscribe(body: SubscribeBody, request: Request, db: Session = Depends(get_db)):
+    _check_subscribe_rate(_client_ip(request))
     from ..models.newsletter import NewsletterSubscriber
     email = str(body.email).strip().lower()
     existing = db.query(NewsletterSubscriber).filter(NewsletterSubscriber.email == email).first()

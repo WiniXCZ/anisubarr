@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import get_current_user, require_admin
 from ..models.library import Library
 from ..models.movie import Movie
 from ..models.series import Series
@@ -93,7 +93,7 @@ def list_libraries(db: Session = Depends(get_db), _: User = Depends(get_current_
 
 
 @router.post("", status_code=201)
-def create_library(body: LibraryCreate, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def create_library(body: LibraryCreate, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     lib = Library(**body.model_dump())
     db.add(lib)
     db.commit()
@@ -111,7 +111,7 @@ def get_library(lib_id: int, db: Session = Depends(get_db), _: User = Depends(ge
 
 
 @router.patch("/{lib_id}")
-def update_library(lib_id: int, body: LibraryUpdate, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def update_library(lib_id: int, body: LibraryUpdate, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     lib = db.query(Library).filter(Library.id == lib_id).first()
     if not lib:
         raise HTTPException(404, "Library not found")
@@ -128,7 +128,7 @@ def update_library(lib_id: int, body: LibraryUpdate, db: Session = Depends(get_d
 
 
 @router.delete("/{lib_id}", status_code=204)
-def delete_library(lib_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def delete_library(lib_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     lib = db.query(Library).filter(Library.id == lib_id).first()
     if not lib:
         raise HTTPException(404, "Library not found")
@@ -142,7 +142,7 @@ def delete_library(lib_id: int, db: Session = Depends(get_db), _: User = Depends
 # ── test connection ───────────────────────────────────────────────────────────
 
 @router.post("/{lib_id}/test")
-async def test_library_connection(lib_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+async def test_library_connection(lib_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     lib = db.query(Library).filter(Library.id == lib_id).first()
     if not lib:
         raise HTTPException(404, "Library not found")
@@ -184,7 +184,7 @@ async def test_library_connection(lib_id: int, db: Session = Depends(get_db), _:
 # ── sync ──────────────────────────────────────────────────────────────────────
 
 @router.post("/{lib_id}/sync")
-def sync_library(lib_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def sync_library(lib_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     lib = db.query(Library).filter(Library.id == lib_id).first()
     if not lib:
         raise HTTPException(404, "Library not found")
