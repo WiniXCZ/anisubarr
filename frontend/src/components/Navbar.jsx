@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { getJobs } from "../api/client";
+import { getJobs, getLibraries } from "../api/client";
 import JobsPanel from "./JobsPanel";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useT } from "../i18n/I18nContext";
@@ -67,6 +67,16 @@ export default function Navbar() {
     staleTime: 1500,
   });
   const runningCount = jobsData?.running_count ?? 0;
+
+  // Library tabs — shown on the top bar only when there are 2+ enabled
+  // libraries (a single library needs no switcher).
+  const { data: libraries = [] } = useQuery({
+    queryKey: ["libraries"],
+    queryFn:  () => getLibraries().then(r => r.data),
+    staleTime: 60_000,
+  });
+  const libTabs = (libraries || []).filter(l => l.enabled);
+  const activeLib = new URLSearchParams(location.search).get("lib") || "";
 
   useEffect(() => { setMenuOpen(false); }, [location.pathname]);
 
@@ -284,7 +294,35 @@ export default function Navbar() {
         </div>
       </header>
 
+      {/* Library tabs — only with 2+ libraries; link to /library filtered by ?lib */}
+      {libTabs.length >= 2 && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 6, padding: "7px 18px",
+          background: T.panel, borderBottom: `1px solid ${T.border}`,
+          overflowX: "auto", flexShrink: 0,
+        }}>
+          <LibTab to="/library" label={t("nav_library")} active={location.pathname.startsWith("/library") && !activeLib} />
+          {libTabs.map(l => (
+            <LibTab key={l.id} to={`/library?lib=${l.id}`} label={l.name || `Knihovna ${l.id}`}
+              active={String(activeLib) === String(l.id)} />
+          ))}
+        </div>
+      )}
+
       <JobsPanel open={jobsOpen} onClose={() => setJobsOpen(false)} />
     </>
+  );
+}
+
+function LibTab({ to, label, active }) {
+  return (
+    <Link to={to} style={{
+      padding: "5px 12px", borderRadius: 7, whiteSpace: "nowrap",
+      background: active ? T.accentSoft : "transparent",
+      color: active ? T.accent : T.textDim,
+      border: `1px solid ${active ? T.accent : T.border}`,
+      font: '600 12px "Space Grotesk"', textDecoration: "none",
+      transition: "background 0.12s, color 0.12s",
+    }}>{label}</Link>
   );
 }

@@ -193,6 +193,9 @@ export const testServiceUnsaved = (body)   => api.post("/services/test", body);
 // ── Library stats ─────────────────────────
 export const getLibraryStats    = ()    => api.get("/library/stats");
 
+// ── Libraries (registry-backed) ───────────
+export const getLibraries       = ()    => api.get("/libraries");
+
 // ── Subtitle lines (subtitle editor) ─────
 export const getSubLines        = (epId, lang) => api.get(`/episodes/${epId}/subs/${lang}`);
 export const saveSubLines       = (epId, lang, lines) => api.put(`/episodes/${epId}/subs/${lang}`, { lines });

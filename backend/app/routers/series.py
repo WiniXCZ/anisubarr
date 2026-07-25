@@ -399,6 +399,7 @@ def _series_card(s: Series, dir_cache: dict[str, set[str]] | None = None) -> dic
         "promoted":          bool(s.promoted),
         "audit_status":      s.audit_status,
         "audit_status_reason": s.audit_status_reason,
+        "library_id":        s.library_id,
     }
 
 
