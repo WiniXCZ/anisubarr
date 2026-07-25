@@ -197,16 +197,15 @@ export default function SetupWizard() {
               style={{ ...btnGhost, opacity: (loading || !sonarrHost || !sonarrKey) ? 0.5 : 1 }}>
               {t("setup_test_btn")}
             </button>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button type="button" onClick={() => setStep(2)} disabled={loading}
-                style={{ ...btnGhost, flex: 1, opacity: loading ? 0.6 : 1 }}>
-                {t("setup_skip_btn")}
-              </button>
-              <button type="button" onClick={handleSaveSonarr} disabled={loading}
-                style={{ ...btnPrimary, flex: 1, opacity: loading ? 0.6 : 1 }}>
-                {t("setup_continue_btn")}
-              </button>
-            </div>
+            {/* One button, not two — a separate "Skip" next to filled-in fields
+                was ambiguous and (confirmed in practice) let people lose data
+                they'd just typed by clicking the wrong one. This always does
+                the right thing: saves if there's anything to save, just
+                advances if the fields are empty. */}
+            <button type="button" onClick={handleSaveSonarr} disabled={loading}
+              style={{ ...btnPrimary, opacity: loading ? 0.6 : 1 }}>
+              {(sonarrHost || sonarrKey) ? t("setup_continue_btn") : t("setup_skip_btn")}
+            </button>
           </div>
         )}
 
