@@ -14,6 +14,7 @@ import {
   PageHeader, StatusPill, SettingsGroup, SettingsRow, Toggle, TextField, SelectField,
 } from '../v1design';
 import LibrariesSettings from './LibrariesSettings';
+import ServicesTable from '../components/ServicesTable';
 import { LANGUAGE_OPTIONS } from '../i18n/translations';
 import { useT } from '../i18n/I18nContext';
 
@@ -621,19 +622,23 @@ function ConnectionsSection() {
 
   return (
     <div style={{display:'flex',flexDirection:'column',gap:18}}>
-      <ServiceBlock
-        title="Sonarr" hostKey="sonarr_host" keyKey="sonarr_api_key"
-        fields={f} setFields={setFields}
-        testResult={testResults.sonarr} saving={testing.sonarr}
-        onTest={() => handleTest('sonarr', { host: f.sonarr_host, api_key: f.sonarr_api_key?.startsWith('••••') ? undefined : f.sonarr_api_key })}
-      />
-      <ServiceBlock
-        title="Seerr" hostKey="seerr_host" keyKey="seerr_api_key"
-        extraFields={[{ key:'seerr_external_url', label:t('set_conn_public_address_label'), placeholder:'https://zadosti.luni.ml' }]}
-        fields={f} setFields={setFields}
-        testResult={testResults.seerr} saving={testing.seerr}
-        onTest={() => handleTest('seerr', { host: f.seerr_host, api_key: f.seerr_api_key?.startsWith('••••') ? undefined : f.seerr_api_key })}
-      />
+      {/* Connection registry — Sonarr / Radarr / Prowlarr / qBittorrent / Emby / Seerr */}
+      <ServicesTable/>
+
+      {/* Extra addresses / options that aren't part of a connection's host+key */}
+      <SettingsGroup theme={T} title={t('set_conn_public_address_label')} sub=" ">
+        <SettingsRow theme={T} label="Seerr"
+          sub={t('set_conn_public_address_label')}
+          control={<TextField theme={T} value={f.seerr_external_url || ''} width={280} mono
+            placeholder="https://zadosti.example.com"
+            onChange={v => setFields(p => ({...p, seerr_external_url: v}))}/>}/>
+        <SettingsRow theme={T} last label="Emby / Jellyfin"
+          sub={t('set_conn_ext_url_label')}
+          control={<TextField theme={T} value={f.emby_external_url || ''} width={280} mono
+            placeholder="https://emby.example.com"
+            onChange={v => setFields(p => ({...p, emby_external_url: v}))}/>}/>
+      </SettingsGroup>
+
       {/* Seerr cache sync controls */}
       <SettingsGroup theme={T} title={t('set_conn_seerr_cache_title')} sub={t('set_conn_seerr_cache_sub')}>
         <SettingsRow theme={T} label={t('set_conn_sync_interval_label')}
@@ -652,23 +657,6 @@ function ConnectionsSection() {
             </button>
           }/>
       </SettingsGroup>
-      <ServiceBlock
-        title="Emby / Jellyfin" hostKey="emby_host" keyKey="emby_api_key"
-        extraFields={[{ key:'emby_external_url', label:t('set_conn_ext_url_label'), placeholder:'https://emby.example.com' }]}
-        fields={f} setFields={setFields}
-        testResult={testResults.emby} saving={testing.emby}
-        onTest={() => handleTest('emby', { host: f.emby_host, api_key: f.emby_api_key?.startsWith('••••') ? undefined : f.emby_api_key })}
-      />
-      {/* qBittorrent */}
-      <QBittorrentBlock
-        fields={f} setFields={setFields}
-        testResult={testResults.qbittorrent} saving={!!testing.qbittorrent}
-        onTest={() => handleTest('qbittorrent', {
-          url: f.qbittorrent_url,
-          username: f.qbittorrent_username,
-          password: f.qbittorrent_password?.startsWith('••••') ? undefined : f.qbittorrent_password,
-        })}
-      />
       {/* TMDb */}
       <SettingsGroup theme={T} title="TMDb" sub={t('set_conn_tmdb_sub')}>
         <SettingsRow theme={T} last label={t('set_conn_api_key_label')}
