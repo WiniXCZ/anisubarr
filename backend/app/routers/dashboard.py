@@ -38,7 +38,8 @@ def _service_health(url: str, path: str = "/api/health", timeout: float = 2.0) -
 
 
 def _sonarr_url(db: Session) -> str:
-    host = read_setting("sonarr_host", db) or ""
+    from ..services import connections
+    host, _ = connections.resolve_sonarr(db)
     if host and not host.startswith("http"):
         host = f"http://{host}"
     return host

@@ -9,7 +9,29 @@ from ..config import get_settings
 settings = get_settings()
 
 
+def _resolve_default() -> tuple[str, str]:
+    """Resolve the default Sonarr (host, api_key) from the connection registry,
+    falling back to DB AppSetting override then .env. One place instead of
+    reading settings.sonarr_host directly."""
+    try:
+        from ..database import SessionLocal
+        from . import connections
+        db = SessionLocal()
+        try:
+            return connections.resolve_sonarr(db)
+        finally:
+            db.close()
+    except Exception:
+        return settings.sonarr_host, settings.sonarr_api_key
+
+
 def _client(timeout: int = 30, host: str = "", api_key: str = "") -> httpx.Client:
+    # When the caller doesn't pin a specific instance, resolve the default from
+    # the connection registry (registry → DB setting → .env).
+    if not host or not api_key:
+        r_host, r_key = _resolve_default()
+        host = host or r_host
+        api_key = api_key or r_key
     base = host or settings.sonarr_host
     if not base.startswith("http"):
         base = f"http://{base}"

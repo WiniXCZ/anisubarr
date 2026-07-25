@@ -28,6 +28,7 @@ class LibraryCreate(BaseModel):
     media_type: str = "series"   # anime / series / movies
     sort_order: int = 0
     enabled: bool = True
+    sonarr_service_id: Optional[int] = None   # preferred: link to a registry Service
     sonarr_host: Optional[str] = None
     sonarr_api_key: Optional[str] = None
     radarr_host: Optional[str] = None
@@ -51,6 +52,22 @@ class LibraryUpdate(LibraryCreate):
     media_type: Optional[str] = None
 
 
+# ── connection resolution ─────────────────────────────────────────────────────
+
+def _lib_sonarr(db: Session, lib: Library) -> tuple[str, str]:
+    """(host, api_key) for a library's Sonarr: registry service first
+    (sonarr_service_id), then legacy embedded columns, then the global default."""
+    if lib.sonarr_service_id:
+        from ..models.service import Service
+        svc = db.query(Service).filter(Service.id == lib.sonarr_service_id).first()
+        if svc and svc.host:
+            return svc.host, (svc.api_key or "")
+    if lib.sonarr_host:
+        return lib.sonarr_host, (lib.sonarr_api_key or "")
+    from ..services import connections
+    return connections.resolve_sonarr(db)
+
+
 # ── serializer ────────────────────────────────────────────────────────────────
 
 def _lib_out(lib: Library, db: Session) -> dict:
@@ -62,6 +79,7 @@ def _lib_out(lib: Library, db: Session) -> dict:
         "media_type": lib.media_type,
         "sort_order": lib.sort_order,
         "enabled": lib.enabled,
+        "sonarr_service_id": lib.sonarr_service_id,
         "sonarr_host": lib.sonarr_host,
         "sonarr_api_key": "••••" if lib.sonarr_api_key else None,
         "radarr_host": lib.radarr_host,
@@ -194,20 +212,21 @@ def sync_library(lib_id: int, db: Session = Depends(get_db), _: User = Depends(r
     if lib.media_type == "movies" and lib.radarr_host:
         from ..services import radarr as radarr_svc
         results["radarr"] = radarr_svc.sync_library(db, lib)
-    elif lib.sonarr_host:
-        # Use existing Sonarr sync logic with library context
-        from ..services import sonarr as sonarr_svc
-        try:
-            raw = sonarr_svc.fetch_all_series(lib.sonarr_host, lib.sonarr_api_key)
-            synced = sonarr_svc.upsert_series_list(
-                db, raw,
-                library_id=lib.id,
-                skip_translation=not lib.translation_enabled,
-                skip_anilist=not lib.anilist_enabled,
-            )
-            results["sonarr"] = synced
-        except Exception as exc:
-            results["sonarr"] = {"error": str(exc)}
+    else:
+        sonarr_host, sonarr_key = _lib_sonarr(db, lib)
+        if sonarr_host:
+            from ..services import sonarr as sonarr_svc
+            try:
+                raw = sonarr_svc.fetch_all_series(sonarr_host, sonarr_key)
+                synced = sonarr_svc.upsert_series_list(
+                    db, raw,
+                    library_id=lib.id,
+                    skip_translation=not lib.translation_enabled,
+                    skip_anilist=not lib.anilist_enabled,
+                )
+                results["sonarr"] = synced
+            except Exception as exc:
+                results["sonarr"] = {"error": str(exc)}
 
     return results
 
