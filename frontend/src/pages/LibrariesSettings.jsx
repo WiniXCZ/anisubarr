@@ -34,6 +34,7 @@ const INDEXER_TYPES = [
 const EMPTY_FORM = {
   name: '',
   media_type: 'series',
+  sonarr_service_id: null,
   sonarr_host: '',
   sonarr_api_key: '',
   radarr_host: '',
@@ -168,6 +169,17 @@ function LibraryForm({ initial = EMPTY_FORM, onSave, onCancel, saving }) {
   const isMovies = form.media_type === 'movies';
   const isAnime  = form.media_type === 'anime';
 
+  // Sonarr instances from the connection registry — a library picks one here
+  // instead of typing a host/api_key.
+  const { data: sonarrServices = [] } = useQuery({
+    queryKey: ['services', 'sonarr'],
+    queryFn: () => api.get('/services', { params: { type: 'sonarr' } }).then(r => r.data),
+  });
+  const sonarrOptions = [
+    { value: '', label: sonarrServices.length ? '— vyber instanci —' : 'žádná služba (přidej v Propojení)' },
+    ...sonarrServices.map(s => ({ value: String(s.id), label: `${s.name}${s.host ? ` · ${s.host}` : ''}` })),
+  ];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <SettingsGroup theme={T} title="Základní info">
@@ -181,17 +193,15 @@ function LibraryForm({ initial = EMPTY_FORM, onSave, onCancel, saving }) {
           control={<Toggle theme={T} on={form.enabled} onChange={v => set('enabled', v)} />} />
       </SettingsGroup>
 
-      {/* Sonarr – for anime & series */}
+      {/* Sonarr – for anime & series. Instance is picked from the registry. */}
       {!isMovies && (
-        <SettingsGroup theme={T} title="Sonarr">
-          <SettingsRow theme={T} label="URL"
-            control={<TextField theme={T} value={form.sonarr_host} width={300} mono
-              placeholder="http://192.168.1.149:8989"
-              onChange={v => set('sonarr_host', v)} />} />
-          <SettingsRow theme={T} last label="API Key"
-            control={<TextField theme={T} value={form.sonarr_api_key} width={300} mono
-              placeholder="••••••••"
-              onChange={v => set('sonarr_api_key', v)} />} />
+        <SettingsGroup theme={T} title="Sonarr"
+          sub="Vyber instanci z Propojení → Služby">
+          <SettingsRow theme={T} last label="Instance"
+            control={<SelectField theme={T} width={300}
+              value={form.sonarr_service_id != null ? String(form.sonarr_service_id) : ''}
+              options={sonarrOptions}
+              onChange={v => set('sonarr_service_id', v ? Number(v) : null)} />} />
         </SettingsGroup>
       )}
 
