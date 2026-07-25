@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from .config import get_settings
 
@@ -8,6 +8,27 @@ engine = create_engine(
     settings.database_url,
     connect_args={"check_same_thread": False},
 )
+
+
+if settings.database_url.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _connection_record):
+        """Enable WAL + a busy timeout on every SQLite connection.
+
+        WAL lets readers and a writer proceed concurrently (the app runs a
+        background scheduler, fire-and-forget threads, and — since the public
+        site — a second uvicorn process over the same file). busy_timeout makes
+        a connection wait for a lock instead of instantly raising
+        'database is locked'. Set per-connection because these PRAGMAs don't
+        persist across connections (journal_mode does persist in the file, but
+        re-asserting it is harmless)."""
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA busy_timeout=10000")
+            cur.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cur.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

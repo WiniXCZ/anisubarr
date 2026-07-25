@@ -330,6 +330,53 @@ async def test_connection(
 
 # ── Test helpers ──────────────────────────────────────────────────────────────
 
+def _test_smb(body: dict, db: Session) -> dict:
+    """Test media access. In 'local' mode (default) verify the configured root
+    directory is a reachable directory; in 'smb' mode also try to authenticate
+    to the share (Windows only — a no-op that reports success on Linux, where
+    the share is expected to be mounted into the container).
+    """
+    from ..services import path_resolver
+
+    mode = (body.get("media_access_mode")
+            or _get_setting(db, "media_access_mode")
+            or "local")
+    root = (body.get("media_root")
+            or body.get("path_local_prefix")
+            or _get_setting(db, "media_root")
+            or _get_setting(db, "path_local_prefix")
+            or "")
+
+    if not root:
+        return {"connected": False, "reason": "Cesta k médiím není nastavena (media_root / path_local_prefix)"}
+
+    if mode == "smb":
+        host = body.get("host") or _get_setting(db, "smb_host") or ""
+        user = body.get("username") or _get_setting(db, "smb_username") or ""
+        pwd  = body.get("password") or _get_setting(db, "smb_password") or ""
+        try:
+            from ..services.subtitle_utils import smb_authenticate
+            ok, msg = smb_authenticate(host, user, pwd)
+        except Exception as exc:
+            return {"connected": False, "reason": f"SMB autentizace selhala: {exc}"}
+        if not ok:
+            return {"connected": False, "reason": msg}
+        # After auth, still verify the path is reachable.
+
+    try:
+        local_root = path_resolver.unc_to_local(root)
+    except Exception:
+        local_root = root
+
+    if os.path.isdir(local_root):
+        return {"connected": True, "path": local_root, "mode": mode}
+    return {
+        "connected": False,
+        "reason": f"Cesta není dostupná jako složka: {local_root}",
+        "mode": mode,
+    }
+
+
 async def _test_sonarr(body: dict, db: Session) -> dict:
     host    = body.get("host") or _get_setting(db, "sonarr_host") or ""
     api_key = body.get("api_key") or _get_setting(db, "sonarr_api_key") or ""

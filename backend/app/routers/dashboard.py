@@ -103,7 +103,19 @@ def get_dashboard_summary(
         [{"type": "series", "ts": s.created_at, "obj": s} for s in recent_series]
         + [{"type": "movie", "ts": m.created_at, "obj": m} for m in recent_movies]
     )
-    recently_added_raw.sort(key=lambda x: x["ts"] or "", reverse=True)
+
+    def _sort_ts(dt) -> float:
+        # created_at may be None (rows predating the column) or a mix of naive
+        # (SQLite) and tz-aware datetimes — both break a direct comparison. Map
+        # everything to a single comparable epoch float so the sort never raises.
+        if dt is None:
+            return 0.0
+        try:
+            return dt.timestamp()
+        except (TypeError, ValueError, OSError):
+            return 0.0
+
+    recently_added_raw.sort(key=lambda x: _sort_ts(x["ts"]), reverse=True)
     recently_added = []
     for item in recently_added_raw[:10]:
         if item["type"] == "series":

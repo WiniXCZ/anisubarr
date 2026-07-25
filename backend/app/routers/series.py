@@ -492,6 +492,25 @@ def refresh_series_counts(db, series: Series, use_disk: bool = True) -> None:
     db.commit()
 
 
+def _do_translate(series_id: int) -> None:
+    """Background task: translate a series overview to Czech via the configured
+    AI provider. Runs in its own DB session since it executes after the request
+    has returned (BackgroundTasks)."""
+    from ..database import SessionLocal
+    from ..services.ai_description import ensure_czech_description
+    db = SessionLocal()
+    try:
+        s = db.query(Series).filter(Series.id == series_id).first()
+        if not s:
+            return
+        try:
+            ensure_czech_description(s, db)
+        except Exception as exc:
+            log.warning("[translate] series %d failed: %s", series_id, exc)
+    finally:
+        db.close()
+
+
 def _refresh_all_counts_task() -> None:
     """Background task: refresh cached counts for every series (disk scan included). [reload trigger]"""
     from ..database import SessionLocal

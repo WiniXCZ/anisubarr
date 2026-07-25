@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFi
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, subqueryload
 from typing import Optional
+from datetime import datetime, timezone
 import os
 import threading
 
@@ -297,6 +298,7 @@ def download_subtitle(
             source=req.source,
             file_path=save_path,
             format=ext,
+            downloaded_at=datetime.now(timezone.utc),
         )
         db.add(sub)
         db.commit()
@@ -421,6 +423,7 @@ def download_best(
             source=best["source"],
             file_path=save_path,
             format=ext,
+            downloaded_at=datetime.now(timezone.utc),
         )
         db.add(sub)
         db.commit()
@@ -515,7 +518,8 @@ def _download_best_for_episode(ep, db) -> str | None:
         _trigger_promotion_check(ep.series_id)
         return best["source"]
 
-    sub = Subtitle(episode_id=ep.id, language=lang, source=best["source"], file_path=save_path, format=ext)
+    sub = Subtitle(episode_id=ep.id, language=lang, source=best["source"], file_path=save_path, format=ext,
+                   downloaded_at=datetime.now(timezone.utc))
     db.add(sub)
     db.commit()
     _langcheck_after_download(db, sub)
@@ -684,6 +688,7 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
                         source=best["source"],
                         file_path=save_path,
                         format=ext,
+                        downloaded_at=datetime.now(timezone.utc),
                     )
                     db.add(sub)
                     db.commit()
@@ -880,6 +885,7 @@ async def upload_subtitle(
             source="upload",
             file_path=save_path,
             format=ext,
+            downloaded_at=datetime.now(timezone.utc),
         )
         db.add(sub)
         db.commit()
@@ -1153,11 +1159,25 @@ def delete_subtitle_file(
     file_path = body.file_path
     if not file_path:
         raise HTTPException(400, "file_path required")
+
+    # Only ever delete subtitle files — never videos or arbitrary files.
+    if os.path.splitext(file_path)[1].lower() not in SUBTITLE_EXTENSIONS:
+        raise HTTPException(400, "Lze mazat pouze soubory titulků")
+
     try:
         from .subtitle_sync import _unc_to_local
         local_path = _unc_to_local(file_path)
     except Exception:
         local_path = file_path
+
+    # Confine deletion to the configured media roots so a caller can't remove
+    # files anywhere on the server (e.g. the app's own DB) via this endpoint.
+    from .filebrowser import _allowed_roots, _is_within_roots
+    roots = _allowed_roots(get_settings())
+    if not roots:
+        raise HTTPException(403, "media_root / path_local_prefix není nakonfigurován — mazání zakázáno")
+    if not (_is_within_roots(local_path, roots) or _is_within_roots(file_path, roots)):
+        raise HTTPException(403, "Cesta je mimo nakonfigurovaný media root")
 
     if not os.path.isfile(local_path):
         raise HTTPException(404, f"Soubor nenalezen: {local_path}")
