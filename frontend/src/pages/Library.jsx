@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef, memo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getSeries, getLibraryStats, getOrphanedFolders,
@@ -508,7 +508,10 @@ const PAGE_SIZE = 36;
 export default function Library() {
   const t = useT();
   const navigate  = useNavigate();
+  const location  = useLocation();
   const isMobile  = useIsMobile();
+  // Selected library from the top-bar tabs (?lib=<id>); empty = all libraries.
+  const libParam = new URLSearchParams(location.search).get('lib') || '';
   const [filter, setFilter]       = useState(() => localStorage.getItem('library_filter') || 'all');
   const [locationFilter, setLocationFilter] = useState(() => localStorage.getItem('library_locationFilter') || 'all');
   const [showPromotedOnly, setShowPromotedOnly] = useState(() => localStorage.getItem('library_promotedOnly') === 'true');
@@ -556,6 +559,9 @@ export default function Library() {
 
   const filtered = useMemo(() => {
     let list = filter === 'all' ? seriesList : seriesList.filter(s => toFilterKey(s.status) === filter);
+    if (libParam) {
+      list = list.filter(s => String(s.library_id) === String(libParam));
+    }
     if (locationFilter !== 'all') {
       list = list.filter(s => getLocationKey(s.path) === locationFilter);
     }
@@ -572,7 +578,7 @@ export default function Library() {
       );
     }
     return sortSeries(list, sort);
-  }, [seriesList, filter, locationFilter, showPromotedOnly, search, sort]);
+  }, [seriesList, filter, libParam, locationFilter, showPromotedOnly, search, sort]);
 
   useEffect(() => { setVisibleCount(PAGE_SIZE); }, [filter, locationFilter, showPromotedOnly, search, sort]);
 
