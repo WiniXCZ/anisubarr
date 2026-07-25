@@ -162,6 +162,19 @@ def restore_from_path(source: Path, *, restart_delay_sec: float = 1.5) -> dict:
     safety = create_backup(label="pre_restore")
 
     shutil.copyfile(source, db_path)
+
+    # With WAL enabled (see database.py), a stale -wal/-shm left over from the
+    # old database would be replayed on top of the freshly restored file after
+    # restart, corrupting it or reintroducing pre-restore rows. The restored
+    # snapshot (produced by VACUUM INTO) is already fully self-contained, so
+    # drop any sidecar WAL files before the process exits.
+    for suffix in ("-wal", "-shm"):
+        sidecar = db_path.with_name(db_path.name + suffix)
+        try:
+            sidecar.unlink(missing_ok=True)
+        except OSError as exc:
+            log.warning("[backup] could not remove %s: %s", sidecar, exc)
+
     log.warning("[backup] RESTORE applied from %s — safety copy: %s. Restarting in %.1fs.",
                 source, safety["filename"], restart_delay_sec)
 

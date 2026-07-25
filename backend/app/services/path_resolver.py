@@ -27,6 +27,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import logging
 from pathlib import PurePosixPath, PureWindowsPath
 from .subtitle_utils import smb_authenticate
@@ -34,6 +35,18 @@ from .subtitle_utils import smb_authenticate
 log = logging.getLogger("anisubarr.path_resolver")
 
 _smb_authed: bool = False
+
+# Short-lived cache for _cfg_value(). resolve() is called in tight loops over
+# whole libraries; without this, every call opened a fresh DB session just to
+# re-read the same path prefixes. A few seconds of staleness on a rarely-changed
+# setting is harmless and cuts the session churn to (at most) one per key per TTL.
+_cfg_cache: dict[str, tuple[float, str]] = {}
+_CFG_TTL = 5.0  # seconds
+
+
+def _cfg_cache_clear() -> None:
+    """Drop the cache so a settings change is picked up immediately."""
+    _cfg_cache.clear()
 
 
 def _cfg_value(key: str, env_default: str = "") -> str:
@@ -44,7 +57,15 @@ def _cfg_value(key: str, env_default: str = "") -> str:
     `get_settings()` is lru_cache'd and only reflects .env at process start, so
     without this DB check, path/SMB settings changed in the UI would silently
     have no effect until the container restarts.
+
+    Cached for _CFG_TTL seconds to avoid a DB session per resolve() in hot loops.
     """
+    now = time.monotonic()
+    cached = _cfg_cache.get(key)
+    if cached and now - cached[0] < _CFG_TTL:
+        return cached[1] or env_default
+
+    value = env_default
     try:
         from ..database import SessionLocal
         from ..models.app_settings import AppSetting
@@ -52,12 +73,13 @@ def _cfg_value(key: str, env_default: str = "") -> str:
         try:
             row = db.query(AppSetting).filter(AppSetting.key == key).first()
             if row and row.value:
-                return row.value
+                value = row.value
         finally:
             db.close()
     except Exception:
         pass
-    return env_default
+    _cfg_cache[key] = (now, value if value != env_default else "")
+    return value
 
 
 def media_access_mode() -> str:

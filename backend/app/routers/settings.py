@@ -56,6 +56,8 @@ EDITABLE_KEYS: set[str] = {
     "public_site_url",   # str — public-facing URL shown in newsletter emails, e.g. https://anime.example.com
     # ── Backup ──────────────────────────────────────────────────────────
     "auto_backup_keep_count",   # int — how many automatic backups to retain (default 14)
+    # ── Subtitle detection ──────────────────────────────────────────────
+    "deep_embedded_probe",   # bool — ffprobe video files for embedded CS tracks (slow, default off)
     # Discord notification toggles
     "discord_notify_new_series",
     "discord_notify_subtitles_downloaded",
@@ -259,6 +261,18 @@ def save_settings(
         saved.append(key)
 
     db.commit()
+
+    # Path/SMB prefixes are cached in path_resolver — drop that cache so changes
+    # take effect immediately instead of after the short TTL.
+    if any(k in saved for k in (
+        "path_sonarr_prefix", "path_local_prefix", "path_cache_prefix",
+        "media_access_mode", "smb_host", "smb_username", "smb_password",
+    )):
+        try:
+            from ..services import path_resolver
+            path_resolver._cfg_cache_clear()
+        except Exception:
+            pass
 
     # If seerr_sync_interval changed, update the ScheduledJob and reload the scheduler job
     if "seerr_sync_interval" in saved:
