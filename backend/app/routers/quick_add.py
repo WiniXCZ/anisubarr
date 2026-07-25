@@ -81,9 +81,9 @@ def _find_similar_series(base: str, api_key: str, title: str) -> dict | None:
 
 
 def _sonarr_client(db: Session) -> tuple[str, str]:
-    """Return (base_url, api_key) from DB/env settings."""
-    host = read_setting("sonarr_host", db) or ""
-    api_key = read_setting("sonarr_api_key", db) or ""
+    """Return (base_url, api_key) from the connection registry (fallback DB/env)."""
+    from ..services import connections
+    host, api_key = connections.resolve_sonarr(db)
     if not host:
         raise HTTPException(status_code=503, detail="Sonarr host není nakonfigurován")
     if not api_key:

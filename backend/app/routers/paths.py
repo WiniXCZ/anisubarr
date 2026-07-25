@@ -8,8 +8,10 @@ import sys
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from ..config import get_settings
+from ..database import get_db
 from ..deps import get_current_user, require_admin
 from ..models.user import User
 from ..services import path_resolver
@@ -18,9 +20,14 @@ router = APIRouter(prefix="/api/paths", tags=["paths"])
 
 
 @router.get("/config")
-def get_path_config(_: User = Depends(get_current_user)):
+def get_path_config(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
     """Vrátí aktuální konfiguraci path mappingu včetně stavu Sonarr, Seerr a Emby."""
+    from ..services import connections
     cfg = get_settings()
+    sonarr_host, sonarr_key = connections.resolve_sonarr(db)
     return {
         # Základní path info
         "platform":           sys.platform,
@@ -33,9 +40,9 @@ def get_path_config(_: User = Depends(get_current_user)):
         "smb_username":       cfg.smb_username,
         "smb_configured":     bool(cfg.smb_username and cfg.smb_password),
 
-        # Sonarr
-        "sonarr_host":        cfg.sonarr_host,
-        "sonarr_configured":  bool(cfg.sonarr_host and cfg.sonarr_api_key),
+        # Sonarr (from connection registry)
+        "sonarr_host":        sonarr_host,
+        "sonarr_configured":  bool(sonarr_host and sonarr_key),
 
         # Seerr
         "seerr_host":        cfg.seerr_host,
