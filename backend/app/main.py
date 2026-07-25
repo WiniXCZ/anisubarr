@@ -30,7 +30,7 @@ from .routers import (
     downloads, glossary, video_stream, episode_markers, logs,
     qbittorrent, search, dashboard,
     quick_add, discover, watchlist, audit,
-    libraries, public, newsletter_admin, backup,
+    libraries, public, newsletter_admin, backup, services,
 )
 
 settings = get_settings()
@@ -82,12 +82,30 @@ def _migrate_seerr_settings() -> None:
         print(f"[WARN] Seerr migration skipped: {exc}")
 
 
+def _seed_service_registry() -> None:
+    """Seed the connection registry (services table) from existing global config
+    on first run so a pre-registry install keeps working without manual setup."""
+    try:
+        from .database import SessionLocal
+        from .services.connections import migrate_legacy_config
+        db = SessionLocal()
+        try:
+            n = migrate_legacy_config(db)
+            if n:
+                print(f"[migrate] Seeded {n} service(s) into the connection registry")
+        finally:
+            db.close()
+    except Exception as exc:
+        print(f"[WARN] Service registry seed skipped: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # -- Startup --
     create_all()
     _migrate_add_promoted_at()
     _migrate_seerr_settings()
+    _seed_service_registry()
     from .services import job_log as _jl
     _jl.cleanup_stale_running()
     _jl.wal_checkpoint()
@@ -177,6 +195,7 @@ app.include_router(libraries.router)
 app.include_router(public.router)
 app.include_router(newsletter_admin.router)
 app.include_router(backup.router)
+app.include_router(services.router)
 
 
 @app.get("/api/health")

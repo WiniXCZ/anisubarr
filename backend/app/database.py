@@ -47,7 +47,7 @@ def get_db():
 
 def create_all():
     """Create all tables. Called on startup."""
-    from .models import user, series, schedule, job_run, api_key, app_settings, request, glossary, episode_markers, seerr_cache, watchlist, audit_log, library, movie, newsletter  # noqa: F401
+    from .models import user, series, schedule, job_run, api_key, app_settings, request, glossary, episode_markers, seerr_cache, watchlist, audit_log, library, movie, newsletter, service  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _migrate_add_columns()
 
@@ -86,6 +86,8 @@ def _migrate_add_columns():
         "ALTER TABLE series ADD COLUMN library_id INTEGER REFERENCES libraries(id)",
         "CREATE INDEX IF NOT EXISTS idx_series_library_id ON series (library_id)",
         "CREATE INDEX IF NOT EXISTS idx_movies_library_id ON movies (library_id)",
+        "ALTER TABLE libraries ADD COLUMN sonarr_service_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS idx_libraries_sonarr_service_id ON libraries (sonarr_service_id)",
     ]
     with engine.connect() as conn:
         for sql in migrations:
