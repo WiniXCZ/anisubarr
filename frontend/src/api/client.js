@@ -182,6 +182,14 @@ export const getAppSettings    = ()       => api.get("/settings");
 export const updateSettings    = (data)   => api.put("/settings", data);
 export const testConnection    = (svc, body) => api.post(`/settings/test/${svc}`, body);
 
+// ── Services (connection registry) ────────
+export const getServices        = (type)   => api.get("/services", { params: type ? { type } : {} });
+export const createService      = (data)   => api.post("/services", data);
+export const updateService      = (id, d)  => api.patch(`/services/${id}`, d);
+export const deleteService      = (id)     => api.delete(`/services/${id}`);
+export const testService        = (id)     => api.post(`/services/${id}/test`);
+export const testServiceUnsaved = (body)   => api.post("/services/test", body);
+
 // ── Library stats ─────────────────────────
 export const getLibraryStats    = ()    => api.get("/library/stats");
 
