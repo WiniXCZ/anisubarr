@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 # ---------------------------------------------------------------------------
 # Czech subtitle language codes - single source of truth used across routers
@@ -17,6 +18,36 @@ CS_NAMES: frozenset = CS_LANGS | frozenset(
 )
 
 _SUB_EXTS = ("srt", "ass", "ssa", "vtt")
+
+# has_cs_sub() can optionally probe the video file itself with ffprobe to detect
+# embedded Czech subtitle tracks Sonarr's mediaInfo missed. That spawns one
+# ffprobe process per distinct video file, which is far too expensive to run on
+# every library/grid render (has_cs_sub is called in loops over whole libraries).
+# It is therefore gated behind the `deep_embedded_probe` AppSetting (default
+# off) and the result cached briefly so a hot loop reads the DB at most once.
+_probe_setting_cache: dict = {"val": None, "ts": 0.0}
+_PROBE_SETTING_TTL = 30.0  # seconds
+
+
+def _embedded_probe_enabled() -> bool:
+    now = time.monotonic()
+    if _probe_setting_cache["val"] is not None and now - _probe_setting_cache["ts"] < _PROBE_SETTING_TTL:
+        return _probe_setting_cache["val"]
+    val = False
+    try:
+        from ..database import SessionLocal
+        from ..models.app_settings import AppSetting
+        db = SessionLocal()
+        try:
+            row = db.query(AppSetting).filter(AppSetting.key == "deep_embedded_probe").first()
+            val = bool(row and (row.value or "").strip().lower() in ("true", "1", "yes"))
+        finally:
+            db.close()
+    except Exception:
+        val = False
+    _probe_setting_cache["val"] = val
+    _probe_setting_cache["ts"] = now
+    return val
 
 
 def _file_non_empty(path: str) -> bool:
@@ -82,6 +113,11 @@ def has_cs_sub(ep, dir_cache=None) -> bool:
         #    ffprobe. Sonarr's mediaInfo.subtitles field is sometimes empty/null
         #    even when the file does contain a Czech subtitle track (e.g. ASS
         #    tracks that Emby detects fine but Sonarr's parser misses).
+        #    Off by default — see _embedded_probe_enabled() — because it spawns
+        #    an ffprobe process per video file, too slow for library-wide loops.
+        if not _embedded_probe_enabled():
+            return False
+
         from ..services import video as video_service
 
         probe_cache = cache.setdefault("__ffprobe_subs__", {})

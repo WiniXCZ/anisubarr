@@ -78,7 +78,13 @@ def _qbit_queue(db) -> list[dict]:
                 eta = t.get("eta", 0)
 
                 if speed > 0 and eta < 999999:
-                    eta_str = f"{eta // 60:02d}:{eta % 60:02d}"
+                    # Show H:MM:SS once past an hour so a >60 min ETA doesn't
+                    # render as a misleading "90:30".
+                    if eta >= 3600:
+                        h, rem = divmod(eta, 3600)
+                        eta_str = f"{h}:{rem // 60:02d}:{rem % 60:02d}"
+                    else:
+                        eta_str = f"{eta // 60:02d}:{eta % 60:02d}"
                 else:
                     eta_str = "—"
 

@@ -429,6 +429,7 @@ def download_best(
         db.commit()
         db.refresh(sub)
         lc = _langcheck_after_download(db, sub)   # detekce SK
+        db.refresh(sub)                            # pick up detected_lang written by langcheck
         job_log.finish_run(run, "done", f"{best['source']} → {ext}")
         # Fire-and-forget promotion check for this series
         _trigger_promotion_check(ep.series_id)
