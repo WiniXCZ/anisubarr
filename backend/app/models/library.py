@@ -21,7 +21,13 @@ class Library(Base):
     sort_order  = Column(Integer, default=0, nullable=False)
     enabled     = Column(Boolean, default=True, nullable=False)
 
-    # ── Sonarr ───────────────────────────────────────────────────────────────
+    # ── Connection registry link (preferred) ─────────────────────────────────
+    # New model: a library points at a Service instance from the registry
+    # instead of embedding host/api_key. The legacy embedded columns below stay
+    # for backward compat during the migration and are phased out afterwards.
+    sonarr_service_id = Column(Integer, nullable=True, index=True)
+
+    # ── Sonarr (legacy embedded — deprecated) ─────────────────────────────────
     sonarr_host    = Column(String, nullable=True)
     sonarr_api_key = Column(String, nullable=True)
 
