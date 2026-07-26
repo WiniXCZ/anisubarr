@@ -117,3 +117,35 @@ def test_legacy_seed_creates_rows_once(db):
     assert (kamui.username, kamui.password, kamui.extra) == ("ku", "kp", "rar")
     # Providers with no stored credentials aren't created as empty rows.
     assert db.query(Service).filter(Service.type == "hiyori").count() == 0
+
+
+def test_nightly_download_defaults_off_and_migrates_once(db):
+    """The library-wide nightly sweep must be off by default, and an install
+    that already had it on gets it switched off exactly once."""
+    from app.models.schedule import ScheduledJob
+    from app.services import scheduler as sched
+
+    assert sched.JOB_REGISTRY["download_missing"].get("enabled") is False
+
+    db.query(ScheduledJob).delete()
+    db.commit()
+    sched._ensure_default_jobs()
+
+    row = db.query(ScheduledJob).filter(ScheduledJob.job_id == "download_missing").one()
+    assert row.enabled is False, "nová instalace má noční úlohu vypnutou"
+    # Other jobs keep defaulting to enabled.
+    assert db.query(ScheduledJob).filter(ScheduledJob.job_id == "sonarr_sync").one().enabled is True
+
+    # Simulate an existing install that had it enabled.
+    row.enabled = True
+    db.commit()
+    assert sched.disable_unattended_download_once() is True
+    db.expire_all()
+    assert db.query(ScheduledJob).filter(ScheduledJob.job_id == "download_missing").one().enabled is False
+
+    # Runs once only — a deliberate re-enable is respected afterwards.
+    db.query(ScheduledJob).filter(ScheduledJob.job_id == "download_missing").update({"enabled": True})
+    db.commit()
+    assert sched.disable_unattended_download_once() is False
+    db.expire_all()
+    assert db.query(ScheduledJob).filter(ScheduledJob.job_id == "download_missing").one().enabled is True
