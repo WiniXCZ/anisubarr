@@ -94,6 +94,45 @@ def test_hard_floor_on_interval():
     assert lim._clamp(5.0, -10)[1] == 0
 
 
+def test_auth_failure_blocks_retries():
+    """A banned account must not re-attempt a login on every call — repeated
+    failed logins from one IP are what turns an account ban into an IP ban."""
+    with lim._auth_lock:
+        lim._auth_fail.clear()
+
+    lim.check_auth_blocked("p", "user")   # clean slate: no block
+    lim.note_auth_failure("p", "user")
+
+    with pytest.raises(lim.AuthBlocked) as exc:
+        lim.check_auth_blocked("p", "user")
+    assert "přihlášení" in str(exc.value)
+
+    # Backoff escalates with repeated failures.
+    lim.note_auth_failure("p", "user")
+    with lim._auth_lock:
+        assert lim._auth_fail["p:user"]["count"] == 2
+
+    # A success clears the block.
+    lim.note_auth_success("p", "user")
+    lim.check_auth_blocked("p", "user")
+
+
+def test_auth_block_is_per_account():
+    with lim._auth_lock:
+        lim._auth_fail.clear()
+    lim.note_auth_failure("p", "banned")
+    lim.check_auth_blocked("p", "other")       # different account — fine
+    lim.check_auth_blocked("other", "banned")  # different provider — fine
+    with pytest.raises(lim.AuthBlocked):
+        lim.check_auth_blocked("p", "banned")
+
+
+def test_auth_blocked_is_a_rate_limit_error():
+    """Callers that already handle RateLimitExceeded (bulk job, scheduler) must
+    stop on an auth block too, without needing a second except clause."""
+    assert issubclass(lim.AuthBlocked, lim.RateLimitExceeded)
+
+
 def test_usage_reports_counts():
     lim.acquire("p")
     usage = lim.usage()

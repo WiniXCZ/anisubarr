@@ -88,6 +88,22 @@ class HiyoriScraper:
         return r
 
     def login(self):
+        """Login, guarded by the shared auth-failure backoff.
+
+        A banned or wrong-credentials account would otherwise re-attempt a
+        login on every call; from the provider's side that looks like
+        credential stuffing and escalates an account ban into an IP ban.
+        """
+        scraper_limiter.check_auth_blocked("hiyori", self.username)
+        try:
+            result = self._login_impl()
+        except Exception:
+            scraper_limiter.note_auth_failure("hiyori", self.username)
+            raise
+        scraper_limiter.note_auth_success("hiyori", self.username)
+        return result
+
+    def _login_impl(self):
         with self._make_client() as c:
             r = self._get(c, BASE_URL + "/")
             r.raise_for_status()

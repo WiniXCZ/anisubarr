@@ -168,6 +168,57 @@ def note_rejection(provider: str, retry_after=None) -> None:
     )
 
 
+# ── Auth failure backoff ─────────────────────────────────────────────────────
+# A banned or wrong-credentials account otherwise re-attempts a login on every
+# single call. From the provider's side that looks like credential stuffing —
+# which is how an account ban escalates into an IP ban. So failures are cached
+# with an escalating backoff, and the provider is skipped until it expires.
+
+_auth_fail: dict[str, dict] = {}
+_auth_lock = threading.Lock()
+
+_AUTH_BACKOFF_STEPS = (60, 300, 1800, 7200, 21600)  # 1m, 5m, 30m, 2h, 6h
+
+
+class AuthBlocked(RateLimitExceeded):
+    """Login recently failed for this account — don't retry yet."""
+
+
+def check_auth_blocked(provider: str, username: str) -> None:
+    key = f"{provider}:{username}"
+    with _auth_lock:
+        entry = _auth_fail.get(key)
+        if not entry:
+            return
+        remaining = entry["until"] - time.time()
+        if remaining <= 0:
+            return
+    raise AuthBlocked(
+        f"{provider}: přihlášení nedávno selhalo ({entry['count']}x) — "
+        f"další pokus za {int(remaining // 60) + 1} min. "
+        f"Zkontroluj přihlašovací údaje, nebo zdroj vypni v Nastavení."
+    )
+
+
+def note_auth_failure(provider: str, username: str) -> None:
+    key = f"{provider}:{username}"
+    with _auth_lock:
+        entry = _auth_fail.get(key) or {"count": 0}
+        entry["count"] += 1
+        step = _AUTH_BACKOFF_STEPS[min(entry["count"] - 1, len(_AUTH_BACKOFF_STEPS) - 1)]
+        entry["until"] = time.time() + step
+        _auth_fail[key] = entry
+    log.warning(
+        "[limiter] %s: přihlášení selhalo (%dx) — pauza %d s",
+        provider, entry["count"], step,
+    )
+
+
+def note_auth_success(provider: str, username: str) -> None:
+    with _auth_lock:
+        _auth_fail.pop(f"{provider}:{username}", None)
+
+
 def usage() -> dict:
     """Snapshot for diagnostics (/api/system/diag)."""
     interval, limit = _config()
