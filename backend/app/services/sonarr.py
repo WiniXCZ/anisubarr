@@ -63,9 +63,11 @@ def get_series_by_id(series_id: int) -> Optional[dict]:
 
 # ── Episodes ──────────────────────────────────────────────────────────
 
-def get_episodes(series_id: int) -> list[dict]:
-    """Fetch all episodes for a series, including episodeFile with mediaInfo."""
-    with _client() as c:
+def get_episodes(series_id: int, host: str = "", api_key: str = "") -> list[dict]:
+    """Fetch all episodes for a series, including episodeFile with mediaInfo.
+    Pass host/api_key to target a specific Sonarr instance (per-library sync);
+    otherwise the default instance from the connection registry is used."""
+    with _client(host=host, api_key=api_key) as c:
         r = c.get("/api/v3/episode", params={
             "seriesId": series_id,
             "includeEpisodeFile": "true",
@@ -364,9 +366,6 @@ def upsert_series_list(
                     continue
                 setattr(existing, k, v)
             updated += 1
-
-    db.commit()
-    return {"created": created, "updated": updated, "total": len(raw_list)}
 
     db.commit()
     return {"created": created, "updated": updated, "total": len(raw_list)}
