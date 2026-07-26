@@ -26,6 +26,16 @@ router = APIRouter(prefix="/api/system", tags=["system"])
 last_selfheal: dict = {}
 
 
+def _limiter_usage() -> dict:
+    """Per-provider request budget usage — shows at a glance whether a provider
+    is being hammered or is in a cooldown window."""
+    try:
+        from ..services import scraper_limiter
+        return scraper_limiter.usage()
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 @router.get("/diag")
 def system_diag(db: Session = Depends(get_db), _: User = Depends(require_admin)) -> dict:
     settings = get_settings()
@@ -91,4 +101,5 @@ def system_diag(db: Session = Depends(get_db), _: User = Depends(require_admin))
         "services": services,
         "libraries": libraries,
         "selfheal": last_selfheal,
+        "scraper_limits": _limiter_usage(),
     }

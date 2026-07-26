@@ -17,6 +17,8 @@ from .subtitle_utils import extract_rar_subtitle, detect_language_from_name
 
 log = logging.getLogger("anisubarr.kamui")
 
+from . import scraper_limiter
+
 BASE_URL  = "https://kamui-subs.cz"
 
 _UA = (
@@ -47,7 +49,11 @@ class KamuiScraper:
 
     def _get(self, c: httpx.Client, url: str, **kw) -> httpx.Response:
         for attempt in range(3):
+            scraper_limiter.acquire("kamui")
             r = c.get(url, **kw)
+            if r.status_code in (429, 503):
+                scraper_limiter.note_rejection(
+                    "kamui", r.headers.get("Retry-After"))
             if r.status_code == 429:
                 wait = max(int(r.headers.get("Retry-After", "10")), 5) * (attempt + 1)
                 log.warning("Kamui 429 – čekám %ds", wait)
@@ -59,7 +65,11 @@ class KamuiScraper:
 
     def _post(self, c: httpx.Client, url: str, **kw) -> httpx.Response:
         for attempt in range(3):
+            scraper_limiter.acquire("kamui")
             r = c.post(url, **kw)
+            if r.status_code in (429, 503):
+                scraper_limiter.note_rejection(
+                    "kamui", r.headers.get("Retry-After"))
             if r.status_code == 429:
                 wait = max(int(r.headers.get("Retry-After", "10")), 5) * (attempt + 1)
                 log.warning("Kamui 429 – čekám %ds", wait)

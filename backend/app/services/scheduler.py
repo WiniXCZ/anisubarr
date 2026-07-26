@@ -46,6 +46,7 @@ def job_download_missing():
     from ..models.series import Episode, Subtitle  # noqa: F401
     from ..routers.subtitles import _fetch_bytes, _save_subtitle
     from .subtitle_utils import extract_subtitle_bytes
+    from .scraper_limiter import RateLimitExceeded
     from ..utils.settings_helper import read_setting
 
     db = SessionLocal()
@@ -166,6 +167,18 @@ def job_download_missing():
                     "status": "downloaded",
                     "source": best["source"],
                 })
+            except RateLimitExceeded as e:
+                # Provider budget spent or cooling down — abandon the run rather
+                # than logging the same failure for every remaining episode.
+                db.rollback()
+                log.warning(f"[scheduler] download_missing zastaveno: {e}")
+                series_search_log.setdefault(series_id, []).append({
+                    "episode": ep_label,
+                    "sources_tried": tried_sources,
+                    "status": "error",
+                    "error": str(e),
+                })
+                break
             except Exception as e:
                 db.rollback()  # reset PendingRollback state so next iteration has a clean session
                 log.warning(f"[scheduler] ❌ ep {ep_id}: {e}")

@@ -30,6 +30,7 @@ from ..services.hns import HnsScraper
 from ..services.kamui import KamuiScraper
 from ..services.gensubs import GenSubsScraper
 from ..services.subtitle_utils import extract_subtitle_bytes
+from ..services.scraper_limiter import RateLimitExceeded
 from ..services import path_resolver
 
 router  = APIRouter(prefix="/api/subtitles", tags=["subtitles"])
@@ -573,6 +574,10 @@ def download_all_series(
     if not candidates:
         raise HTTPException(400, "Žádné epizody se souborem")
 
+    from ..services import job_log as _jl
+    if _jl.is_job_running("bulk_download"):
+        raise HTTPException(409, "Hromadné stahování už běží — počkej na dokončení")
+
     background_tasks.add_task(_download_all_task, series_id, candidates, s.title)
     return {"status": "queued", "count": len(candidates)}
 
@@ -588,7 +593,7 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
 
     settings = get_settings()
     label = f"Hromadné stažení titulků ({series_title}, {len(episode_ids)} epizod)"
-    run = job_log.start_run(f"bulk_download_{series_id}", label)
+    run = job_log.start_run("bulk_download", label)
 
     ok = fail = 0
     error_lines: list[str] = []   # per-episode error details for the final summary
@@ -719,6 +724,15 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
                             _msg(f"⚠ ({i+1}/{total}) {ep_label} — sync: {sync_result.get('message','')[:80]}")
                     except Exception as sync_exc:
                         _msg(f"⚠ ({i+1}/{total}) {ep_label} — sync chyba: {str(sync_exc)[:80]}")
+            except RateLimitExceeded as exc:
+                # Daily budget spent or the provider is cooling down — stop the
+                # whole run instead of retrying (and failing) for every episode.
+                import logging
+                error_lines.append(str(exc))
+                _msg(f"⏸ Zastaveno: {exc}")
+                logging.getLogger("anisubarr.subtitles").warning(
+                    "[bulk] zastaveno kvůli limitu: %s", exc)
+                break
             except Exception as exc:
                 fail += 1
                 err_msg = str(exc)[:120]
@@ -795,6 +809,10 @@ def download_all_bulk_series(
     if not candidates:
         raise HTTPException(400, "Všechny epizody vybraných anime již mají CZ titulky")
 
+    from ..services import job_log as _jl
+    if _jl.is_job_running("bulk_download"):
+        raise HTTPException(409, "Hromadné stahování už běží — počkej na dokončení")
+
     background_tasks.add_task(
         _download_all_task, 0, candidates, f"{len(req.series_ids)} vybraných anime"
     )
@@ -831,6 +849,10 @@ def download_best_bulk(
         candidates.append(eid)
     if not candidates:
         raise HTTPException(400, "Všechny vybrané epizody již mají CZ titulky")
+
+    from ..services import job_log as _jl
+    if _jl.is_job_running("bulk_download"):
+        raise HTTPException(409, "Hromadné stahování už běží — počkej na dokončení")
 
     background_tasks.add_task(_download_all_task, 0, candidates, f"{len(candidates)} vybraných epizod")
     return {"status": "queued", "count": len(candidates)}

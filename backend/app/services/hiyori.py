@@ -13,6 +13,8 @@ from bs4 import BeautifulSoup
 
 log = logging.getLogger("anisubarr.hiyori")
 
+from . import scraper_limiter
+
 BASE_URL  = "https://hiyori.cz"
 LOGIN_URL = f"{BASE_URL}/account/login"
 
@@ -52,7 +54,11 @@ class HiyoriScraper:
     def _get(self, c: httpx.Client, url: str, **kwargs) -> httpx.Response:
         """GET with automatic retry on 429 (respects Retry-After header)."""
         for attempt in range(4):
+            scraper_limiter.acquire("hiyori")
             r = c.get(url, **kwargs)
+            if r.status_code in (429, 503):
+                scraper_limiter.note_rejection(
+                    "hiyori", r.headers.get("Retry-After"))
             if r.status_code == 429:
                 retry_after = int(r.headers.get("Retry-After", "10"))
                 wait = max(retry_after, 5) * (attempt + 1)
@@ -66,7 +72,11 @@ class HiyoriScraper:
     def _post(self, c: httpx.Client, url: str, **kwargs) -> httpx.Response:
         """POST with automatic retry on 429."""
         for attempt in range(4):
+            scraper_limiter.acquire("hiyori")
             r = c.post(url, **kwargs)
+            if r.status_code in (429, 503):
+                scraper_limiter.note_rejection(
+                    "hiyori", r.headers.get("Retry-After"))
             if r.status_code == 429:
                 retry_after = int(r.headers.get("Retry-After", "10"))
                 wait = max(retry_after, 5) * (attempt + 1)

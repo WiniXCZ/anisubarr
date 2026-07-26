@@ -12,6 +12,8 @@ from urllib.parse import urlencode, urlparse, parse_qs
 
 log = logging.getLogger("anisubarr.hns")
 
+from . import scraper_limiter
+
 BASE_URL   = "https://hns.sk"
 LOGIN_URL  = f"{BASE_URL}/site/login"
 SEARCH_URL = f"{BASE_URL}/animelist"
@@ -43,7 +45,11 @@ class HnsScraper:
     def _get(self, c: httpx.Client, url: str, **kwargs) -> httpx.Response:
         """GET with retry on 429."""
         for attempt in range(4):
+            scraper_limiter.acquire("hns")
             r = c.get(url, **kwargs)
+            if r.status_code in (429, 503):
+                scraper_limiter.note_rejection(
+                    "hns", r.headers.get("Retry-After"))
             if r.status_code == 429:
                 wait = max(int(r.headers.get("Retry-After", "10")), 5) * (attempt + 1)
                 log.warning("HNS 429 – čekám %ds", wait)
@@ -56,7 +62,11 @@ class HnsScraper:
     def _post(self, c: httpx.Client, url: str, **kwargs) -> httpx.Response:
         """POST with retry on 429."""
         for attempt in range(4):
+            scraper_limiter.acquire("hns")
             r = c.post(url, **kwargs)
+            if r.status_code in (429, 503):
+                scraper_limiter.note_rejection(
+                    "hns", r.headers.get("Retry-After"))
             if r.status_code == 429:
                 wait = max(int(r.headers.get("Retry-After", "10")), 5) * (attempt + 1)
                 log.warning("HNS 429 – čekám %ds", wait)
