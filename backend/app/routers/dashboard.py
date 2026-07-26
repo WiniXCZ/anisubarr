@@ -212,57 +212,38 @@ async def get_indexer_status(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Return live status of all configured indexers and download clients across libraries."""
-    libs = db.query(Library).filter(Library.enabled == True).all()  # noqa: E712
-    results = []
-
-    async def _check(name: str, url: str, path: str, api_key: str = "",
-                     lib_name: str = "", service_type: str = "indexer"):
-        if not url:
-            return
-        base = url.rstrip("/")
-        if not base.startswith("http"):
-            base = f"http://{base}"
-        headers = {"X-Api-Key": api_key} if api_key else {}
-        try:
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                r = await client.get(f"{base}{path}", headers=headers, follow_redirects=True)
-            ok = r.status_code < 400
-            results.append({
-                "name": name,
-                "library": lib_name,
-                "type": service_type,
-                "url": base,
-                "ok": ok,
-                "status_code": r.status_code,
-            })
-        except Exception as exc:
-            results.append({
-                "name": name,
-                "library": lib_name,
-                "type": service_type,
-                "url": base,
-                "ok": False,
-                "error": str(exc)[:80],
-            })
-
+    """Return live status of indexers and download clients from the connection
+    registry (Připojení → Služby) — one place, not per-library hosts."""
     import asyncio
-    tasks = []
-    seen_hosts: set[str] = set()
+    from ..models.service import Service
+    from .services import _probe
 
-    for lib in libs:
-        if lib.indexer_host and lib.indexer_host not in seen_hosts:
-            seen_hosts.add(lib.indexer_host)
-            itype = lib.indexer_type or "prowlarr"
-            path = "/api/v1/system/status" if itype == "prowlarr" else "/api/system/status"
-            tasks.append(_check(itype.capitalize(), lib.indexer_host, path,
-                                lib.indexer_api_key or "", lib.name, "indexer"))
-        if lib.torrent_host and lib.torrent_host not in seen_hosts:
-            seen_hosts.add(lib.torrent_host)
-            tasks.append(_check("qBittorrent", lib.torrent_host, "/api/v2/app/version",
-                                "", lib.name, "torrent"))
+    svcs = (
+        db.query(Service)
+        .filter(
+            Service.enabled == True,  # noqa: E712
+            Service.type.in_(["prowlarr", "jackett", "qbittorrent"]),
+        )
+        .order_by(Service.type, Service.id)
+        .all()
+    )
 
-    await asyncio.gather(*tasks)
+    async def _check(svc: Service) -> dict:
+        res = await _probe(svc.type, svc.host or "", svc.api_key or "",
+                           svc.username or "", svc.password or "")
+        out = {
+            "name": svc.name,
+            "type": "torrent" if svc.type == "qbittorrent" else "indexer",
+            "url": svc.host,
+            "ok": bool(res.get("connected")),
+        }
+        if res.get("status") is not None:
+            out["status_code"] = res["status"]
+        if res.get("reason"):
+            out["error"] = str(res["reason"])[:80]
+        return out
+
+    results = list(await asyncio.gather(*[_check(s) for s in svcs]))
     return results
 
 

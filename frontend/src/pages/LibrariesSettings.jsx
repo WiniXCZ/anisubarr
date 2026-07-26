@@ -26,11 +26,6 @@ const MEDIA_TYPES = [
   { value: 'movies', label: 'Filmy (Radarr)' },
 ];
 
-const INDEXER_TYPES = [
-  { value: 'prowlarr', label: 'Prowlarr' },
-  { value: 'jackett',  label: 'Jackett' },
-];
-
 const EMPTY_FORM = {
   name: '',
   media_type: 'series',
@@ -39,12 +34,6 @@ const EMPTY_FORM = {
   sonarr_api_key: '',
   radarr_host: '',
   radarr_api_key: '',
-  indexer_host: '',
-  indexer_api_key: '',
-  indexer_type: 'prowlarr',
-  torrent_host: '',
-  torrent_username: '',
-  torrent_password: '',
   subtitles_enabled: false,
   translation_enabled: false,
   anilist_enabled: false,
@@ -121,8 +110,6 @@ function LibraryCard({ lib, onEdit, onDelete, onSync }) {
         <span style={{ font: `500 12px "Space Grotesk"`, color: T.textDim }}>{count}</span>
         {lib.sonarr_host && <span style={{ font: `11px "JetBrains Mono"`, color: T.textMute }}>Sonarr: {lib.sonarr_host}</span>}
         {lib.radarr_host && <span style={{ font: `11px "JetBrains Mono"`, color: T.textMute }}>Radarr: {lib.radarr_host}</span>}
-        {lib.indexer_host && <span style={{ font: `11px "JetBrains Mono"`, color: T.textMute }}>Indexer: {lib.indexer_host}</span>}
-        {lib.torrent_host && <span style={{ font: `11px "JetBrains Mono"`, color: T.textMute }}>qBit: {lib.torrent_host}</span>}
       </div>
 
       {/* Features */}
@@ -219,34 +206,7 @@ function LibraryForm({ initial = EMPTY_FORM, onSave, onCancel, saving }) {
         </SettingsGroup>
       )}
 
-      {/* Indexer */}
-      <SettingsGroup theme={T} title="Indexer (volitelné)">
-        <SettingsRow theme={T} label="Typ"
-          control={<SelectField theme={T} value={form.indexer_type || 'prowlarr'} width={180}
-            options={INDEXER_TYPES} onChange={v => set('indexer_type', v)} />} />
-        <SettingsRow theme={T} label="URL"
-          control={<TextField theme={T} value={form.indexer_host} width={300} mono
-            placeholder="http://192.168.1.149:9696"
-            onChange={v => set('indexer_host', v)} />} />
-        <SettingsRow theme={T} last label="API Key"
-          control={<TextField theme={T} value={form.indexer_api_key} width={300} mono
-            placeholder="••••••••"
-            onChange={v => set('indexer_api_key', v)} />} />
-      </SettingsGroup>
-
-      {/* Torrent */}
-      <SettingsGroup theme={T} title="qBittorrent (volitelné)">
-        <SettingsRow theme={T} label="URL"
-          control={<TextField theme={T} value={form.torrent_host} width={300} mono
-            placeholder="http://192.168.1.149:8080"
-            onChange={v => set('torrent_host', v)} />} />
-        <SettingsRow theme={T} label="Uživatel"
-          control={<TextField theme={T} value={form.torrent_username} width={200} mono
-            placeholder="admin" onChange={v => set('torrent_username', v)} />} />
-        <SettingsRow theme={T} last label="Heslo"
-          control={<TextField theme={T} value={form.torrent_password} width={200} mono
-            placeholder="••••••••" onChange={v => set('torrent_password', v)} />} />
-      </SettingsGroup>
+      {/* Indexer/stahovač se nastavují centrálně v Připojení → Služby */}
 
       {/* Features */}
       <SettingsGroup theme={T} title="Funkce">
