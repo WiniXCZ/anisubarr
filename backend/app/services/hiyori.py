@@ -13,6 +13,8 @@ from bs4 import BeautifulSoup
 
 log = logging.getLogger("anisubarr.hiyori")
 
+from . import scraper_limiter
+
 BASE_URL  = "https://hiyori.cz"
 LOGIN_URL = f"{BASE_URL}/account/login"
 
@@ -52,7 +54,11 @@ class HiyoriScraper:
     def _get(self, c: httpx.Client, url: str, **kwargs) -> httpx.Response:
         """GET with automatic retry on 429 (respects Retry-After header)."""
         for attempt in range(4):
+            scraper_limiter.acquire("hiyori")
             r = c.get(url, **kwargs)
+            if r.status_code in (429, 503):
+                scraper_limiter.note_rejection(
+                    "hiyori", r.headers.get("Retry-After"))
             if r.status_code == 429:
                 retry_after = int(r.headers.get("Retry-After", "10"))
                 wait = max(retry_after, 5) * (attempt + 1)
@@ -66,7 +72,11 @@ class HiyoriScraper:
     def _post(self, c: httpx.Client, url: str, **kwargs) -> httpx.Response:
         """POST with automatic retry on 429."""
         for attempt in range(4):
+            scraper_limiter.acquire("hiyori")
             r = c.post(url, **kwargs)
+            if r.status_code in (429, 503):
+                scraper_limiter.note_rejection(
+                    "hiyori", r.headers.get("Retry-After"))
             if r.status_code == 429:
                 retry_after = int(r.headers.get("Retry-After", "10"))
                 wait = max(retry_after, 5) * (attempt + 1)
@@ -78,6 +88,22 @@ class HiyoriScraper:
         return r
 
     def login(self):
+        """Login, guarded by the shared auth-failure backoff.
+
+        A banned or wrong-credentials account would otherwise re-attempt a
+        login on every call; from the provider's side that looks like
+        credential stuffing and escalates an account ban into an IP ban.
+        """
+        scraper_limiter.check_auth_blocked("hiyori", self.username)
+        try:
+            result = self._login_impl()
+        except Exception:
+            scraper_limiter.note_auth_failure("hiyori", self.username)
+            raise
+        scraper_limiter.note_auth_success("hiyori", self.username)
+        return result
+
+    def _login_impl(self):
         with self._make_client() as c:
             r = self._get(c, BASE_URL + "/")
             r.raise_for_status()

@@ -105,6 +105,9 @@ EDITABLE_KEYS: set[str] = {
     "scraper_timeout",                 # int  — HTTP timeout in seconds (default 30)
     "scraper_max_results",             # int  — max results per provider (0 = unlimited)
     "scraper_provider_order",          # str  — fallback order, e.g. "hiyori,hns,kamui,gensubs"
+    # ── Politeness limits for subtitle providers (see services/scraper_limiter.py)
+    "scraper_min_interval_seconds",    # float — min seconds between requests to one provider (default 3)
+    "scraper_daily_limit",             # int   — max requests per provider per day (default 1500, 0 = off)
     # ── NFO & Emby ───────────────────────────────────────────────────────
     "nfo_auto_generate_on_add",        # bool — auto-generate NFO when new series is added
     "nfo_auto_refresh_after_promo",    # bool — auto-refresh NFO after promotion

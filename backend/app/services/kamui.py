@@ -17,6 +17,8 @@ from .subtitle_utils import extract_rar_subtitle, detect_language_from_name
 
 log = logging.getLogger("anisubarr.kamui")
 
+from . import scraper_limiter
+
 BASE_URL  = "https://kamui-subs.cz"
 
 _UA = (
@@ -47,7 +49,11 @@ class KamuiScraper:
 
     def _get(self, c: httpx.Client, url: str, **kw) -> httpx.Response:
         for attempt in range(3):
+            scraper_limiter.acquire("kamui")
             r = c.get(url, **kw)
+            if r.status_code in (429, 503):
+                scraper_limiter.note_rejection(
+                    "kamui", r.headers.get("Retry-After"))
             if r.status_code == 429:
                 wait = max(int(r.headers.get("Retry-After", "10")), 5) * (attempt + 1)
                 log.warning("Kamui 429 – čekám %ds", wait)
@@ -59,7 +65,11 @@ class KamuiScraper:
 
     def _post(self, c: httpx.Client, url: str, **kw) -> httpx.Response:
         for attempt in range(3):
+            scraper_limiter.acquire("kamui")
             r = c.post(url, **kw)
+            if r.status_code in (429, 503):
+                scraper_limiter.note_rejection(
+                    "kamui", r.headers.get("Retry-After"))
             if r.status_code == 429:
                 wait = max(int(r.headers.get("Retry-After", "10")), 5) * (attempt + 1)
                 log.warning("Kamui 429 – čekám %ds", wait)
@@ -72,6 +82,22 @@ class KamuiScraper:
     # ── Login ─────────────────────────────────────────────────────────
 
     def login(self):
+        """Login, guarded by the shared auth-failure backoff.
+
+        A banned or wrong-credentials account would otherwise re-attempt a
+        login on every call; from the provider's side that looks like
+        credential stuffing and escalates an account ban into an IP ban.
+        """
+        scraper_limiter.check_auth_blocked("kamui", self.username)
+        try:
+            result = self._login_impl()
+        except Exception:
+            scraper_limiter.note_auth_failure("kamui", self.username)
+            raise
+        scraper_limiter.note_auth_success("kamui", self.username)
+        return result
+
+    def _login_impl(self):
         """Login to kamui-subs.cz. Detects existing session via cookie."""
         with self._make_client() as c:
             r = self._get(c, BASE_URL + "/")
