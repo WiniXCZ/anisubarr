@@ -549,10 +549,18 @@ JOB_REGISTRY: dict[str, dict] = {
     "download_missing": {
         "fn":          job_download_missing,
         "name":        "Stažení chybějících titulků",
-        "description": "Automaticky stáhne CZ titulky pro epizody bez titulků",
+        "description": (
+            "Automaticky stáhne CZ titulky pro epizody bez titulků. "
+            "Výchozně VYPNUTO — projde celou knihovnu a u velkého počtu epizod "
+            "znamená stovky až tisíce požadavků na zdroje titulků. Zapni jen "
+            "pokud víš, že to poskytovatelé snesou (a povolují)."
+        ),
         "interval":    "daily",
         "hour":        5,
         "minute":      0,
+        # Off by default: an unattended sweep of the whole library is what got a
+        # user's provider account banned. On-demand download stays available.
+        "enabled":     False,
     },
     "anilist_refresh": {
         "fn":          job_anilist_refresh,
@@ -734,6 +742,7 @@ def start(db_session_factory=None):
         return
 
     _ensure_default_jobs()
+    disable_unattended_download_once()
     _ensure_default_settings()
 
     _scheduler = BackgroundScheduler(timezone="UTC")
@@ -856,6 +865,43 @@ def _ensure_default_settings():
         db.close()
 
 
+def disable_unattended_download_once() -> bool:
+    """One-time safety migration: switch the library-wide nightly download off
+    on installs that already have it enabled.
+
+    An unattended sweep of the whole library is what flooded a provider and got
+    a user's account banned. This runs exactly once (guarded by a marker) so a
+    deliberate re-enable is never overridden afterwards.
+    """
+    from ..database import SessionLocal
+    from ..models.app_settings import AppSetting
+    from ..models.schedule import ScheduledJob
+
+    marker = "_download_missing_disabled_once"
+    db = SessionLocal()
+    try:
+        if db.query(AppSetting).filter(AppSetting.key == marker).first():
+            return False
+        row = db.query(ScheduledJob).filter(ScheduledJob.job_id == "download_missing").first()
+        changed = False
+        if row and row.enabled:
+            row.enabled = False
+            changed = True
+            log.warning(
+                "[scheduler] noční 'download_missing' vypnut (ochrana zdrojů titulků) "
+                "— zapnout lze v Nastavení → Úlohy"
+            )
+        db.add(AppSetting(key=marker, value="1"))
+        db.commit()
+        return changed
+    except Exception as exc:
+        db.rollback()
+        log.warning("[scheduler] disable_unattended_download_once selhalo: %s", exc)
+        return False
+    finally:
+        db.close()
+
+
 def _ensure_default_jobs():
     """Insert default job rows if they don't exist yet."""
     from ..database import SessionLocal
@@ -874,7 +920,7 @@ def _ensure_default_jobs():
                     minute=meta.get("minute", 0),
                     day_of_week=meta.get("day_of_week"),
                     day_of_month=meta.get("day_of_month"),
-                    enabled=True,
+                    enabled=meta.get("enabled", True),
                 ))
         db.commit()
     finally:
