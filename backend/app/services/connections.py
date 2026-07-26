@@ -53,6 +53,29 @@ def resolve_sonarr(db: Session) -> tuple[str, str]:
     return resolve(db, "sonarr", "sonarr_host", "sonarr_api_key")
 
 
+def resolve_emby(db: Session) -> tuple[str, str]:
+    return resolve(db, "emby", "emby_host", "emby_api_key")
+
+
+def resolve_seerr(db: Session) -> tuple[str, str]:
+    return resolve(db, "seerr", "seerr_host", "seerr_api_key")
+
+
+def resolve_qbittorrent(db: Session) -> tuple[str, str, str]:
+    """Return (host, username, password) for qBittorrent — registry first,
+    then the legacy qbittorrent_* settings."""
+    svc = get_default(db, "qbittorrent")
+    if svc and svc.host:
+        return svc.host, (svc.username or ""), (svc.password or "")
+    from ..routers.settings import _get_setting
+    host = _get_setting(db, "qbittorrent_url") or _get_setting(db, "qbittorrent_host") or ""
+    return (
+        host,
+        _get_setting(db, "qbittorrent_username") or "",
+        _get_setting(db, "qbittorrent_password") or "",
+    )
+
+
 def migrate_legacy_config(db: Session) -> int:
     """Seed the registry from existing global settings on first run.
 

@@ -54,11 +54,12 @@ def _cfg(key: str, db: Session) -> str:
 
 
 def _get_seerr_cfg(db: Session) -> tuple[str, str]:
-    """Return (base_api_url, api_key) or raise 503."""
-    host    = _cfg("seerr_host",    db)
-    api_key = _cfg("seerr_api_key", db)
+    """Return (base_api_url, api_key) or raise 503. Resolves through the
+    connection registry first (Připojení → Služby), then legacy settings."""
+    from ..services import connections
+    host, api_key = connections.resolve_seerr(db)
     if not host or not api_key:
-        raise HTTPException(503, "Seerr není nakonfigurován — nastav SEERR_HOST a SEERR_API_KEY v Nastavení")
+        raise HTTPException(503, "Seerr není nakonfigurován — přidej ho v Připojení → Služby")
     host = host.rstrip("/")
     if not host.startswith("http"):
         host = f"http://{host}"

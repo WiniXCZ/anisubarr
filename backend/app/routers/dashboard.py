@@ -46,19 +46,15 @@ def _sonarr_url(db: Session) -> str:
 
 
 def _emby_url(db: Session) -> str:
-    return (
-        read_setting("emby_external_url", db)
-        or read_setting("emby_host", db)
-        or ""
-    )
+    from ..services import connections
+    host, _ = connections.resolve_emby(db)
+    return read_setting("emby_external_url", db) or host or ""
 
 
 def _seerr_url(db: Session) -> str:
-    return (
-        read_setting("seerr_external_url", db)
-        or read_setting("seerr_host", db)
-        or ""
-    )
+    from ..services import connections
+    host, _ = connections.resolve_seerr(db)
+    return read_setting("seerr_external_url", db) or host or ""
 
 
 # ── endpoints ─────────────────────────────────────────────────────────────────

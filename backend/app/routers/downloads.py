@@ -39,9 +39,8 @@ def _qbit_queue(db) -> list[dict]:
     """Fetch active torrents from qBittorrent API."""
     try:
         import httpx
-        host = _read_setting("qbittorrent_url", db) or _read_setting("qbittorrent_host", db) or ""
-        user = _read_setting("qbittorrent_username", db) or ""
-        pwd  = _read_setting("qbittorrent_password", db) or ""
+        from ..services import connections
+        host, user, pwd = connections.resolve_qbittorrent(db)
         if not host:
             return []
         if not host.startswith("http"):

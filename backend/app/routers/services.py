@@ -162,25 +162,32 @@ _TYPE_PROBE = {
 
 @router.post("/{svc_id}/test")
 async def test_service(svc_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    """Test a saved service using its stored credentials — the UI calls this
+    when the secret in the form is still the mask (unchanged)."""
     svc = db.query(Service).filter(Service.id == svc_id).first()
     if not svc:
         raise HTTPException(404, "Služba nenalezena")
-    return await _probe(svc.type, svc.host or "", svc.api_key or "")
+    return await _probe(svc.type, svc.host or "", svc.api_key or "",
+                        svc.username or "", svc.password or "")
 
 
 class TestBody(BaseModel):
     type: str
     host: Optional[str] = None
     api_key: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
 
 
 @router.post("/test")
 async def test_unsaved_service(body: TestBody, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     """Test a not-yet-saved connection (used by the 'Test' button in the form)."""
-    return await _probe(body.type, body.host or "", body.api_key or "")
+    return await _probe(body.type, body.host or "", body.api_key or "",
+                        body.username or "", body.password or "")
 
 
-async def _probe(service_type: str, host: str, api_key: str) -> dict:
+async def _probe(service_type: str, host: str, api_key: str,
+                 username: str = "", password: str = "") -> dict:
     probe = _TYPE_PROBE.get(service_type)
     if not probe:
         return {"connected": False, "reason": f"Test není podporován pro typ {service_type}"}
@@ -190,6 +197,16 @@ async def _probe(service_type: str, host: str, api_key: str) -> dict:
     base = host.rstrip("/")
     if not base.startswith("http"):
         base = "http://" + base
+
+    # qBittorrent needs a session login (username/password), not an API key —
+    # an anonymous GET returns 403 unless the WebUI auth whitelist allows it.
+    if service_type == "qbittorrent":
+        from .qbittorrent import _qbt_login
+        sid, err = await _qbt_login(base, username, password)
+        if sid is None:
+            return {"connected": False, "reason": err or "Přihlášení selhalo"}
+        return {"connected": True}
+
     headers = {"X-Api-Key": api_key} if (needs_key and api_key) else {}
     try:
         async with httpx.AsyncClient(timeout=6.0) as client:

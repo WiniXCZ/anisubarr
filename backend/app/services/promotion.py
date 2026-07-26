@@ -597,29 +597,14 @@ def _should_demote(
 # ── Seerr-driven demotion ─────────────────────────────────────────────────────
 
 def _seerr_config(db: Session) -> tuple[str, str] | tuple[None, None]:
-    """Return (base_api_url, api_key) or (None, None) if not configured."""
+    """Return (base_api_url, api_key) or (None, None) if not configured.
+    Resolves through the connection registry (Připojení → Služby) first,
+    then legacy DB settings / .env."""
     try:
-        from ..models.app_settings import AppSetting
-        rows = (
-            db.query(AppSetting)
-            .filter(AppSetting.key.in_(["seerr_host", "seerr_api_key"]))
-            .all()
-        )
-        values  = {row.key: row.value for row in rows if row.value}
-        host    = values.get("seerr_host")
-        api_key = values.get("seerr_api_key")
+        from . import connections
+        host, api_key = connections.resolve_seerr(db)
     except Exception:
         host = api_key = None
-
-    if not host or not api_key:
-        # Fall back to environment / .env config
-        try:
-            from ..config import get_settings
-            s       = get_settings()
-            host    = host    or (getattr(s, "seerr_host",    "") or "")
-            api_key = api_key or (getattr(s, "seerr_api_key", "") or "")
-        except Exception:
-            pass
 
     if not host or not api_key:
         return None, None

@@ -28,6 +28,8 @@ def get_path_config(
     from ..services import connections
     cfg = get_settings()
     sonarr_host, sonarr_key = connections.resolve_sonarr(db)
+    seerr_host,  seerr_key  = connections.resolve_seerr(db)
+    emby_host,   emby_key   = connections.resolve_emby(db)
     return {
         # Základní path info
         "platform":           sys.platform,
@@ -44,14 +46,14 @@ def get_path_config(
         "sonarr_host":        sonarr_host,
         "sonarr_configured":  bool(sonarr_host and sonarr_key),
 
-        # Seerr
-        "seerr_host":        cfg.seerr_host,
-        "seerr_configured":  bool(cfg.seerr_host and cfg.seerr_api_key),
+        # Seerr (from connection registry)
+        "seerr_host":        seerr_host,
+        "seerr_configured":  bool(seerr_host and seerr_key),
 
-        # Emby / Jellyfin
-        "emby_host":         cfg.emby_host,
+        # Emby / Jellyfin (from connection registry)
+        "emby_host":         emby_host,
         "emby_external_url": cfg.emby_external_url,
-        "emby_configured":   bool(cfg.emby_host and cfg.emby_api_key),
+        "emby_configured":   bool(emby_host and emby_key),
     }
 
 
