@@ -34,7 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl bui
 
 WORKDIR /app/backend
 
-COPY backend/requirements.txt .
+# requirements.txt includes requirements-core.txt (-r), so both must be copied
+COPY backend/requirements.txt backend/requirements-core.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
