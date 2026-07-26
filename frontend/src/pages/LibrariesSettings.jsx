@@ -75,7 +75,11 @@ function LibraryCard({ lib, onEdit, onDelete, onSync }) {
     setSyncing(true);
     try {
       const res = await syncLibrary(lib.id);
-      toast.success(`Sync hotov: ${JSON.stringify(res)}`);
+      if (res?.status === 'queued') {
+        toast.success('Synchronizace spuštěna na pozadí — průběh v panelu úloh');
+      } else {
+        toast.success(`Sync hotov: ${JSON.stringify(res)}`);
+      }
       onSync?.();
     } catch (e) {
       toast.error('Sync selhal: ' + (e?.response?.data?.detail || e.message));

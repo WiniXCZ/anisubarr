@@ -5,7 +5,7 @@ import logging
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -201,34 +201,107 @@ async def test_library_connection(lib_id: int, db: Session = Depends(get_db), _:
 
 # ── sync ──────────────────────────────────────────────────────────────────────
 
-@router.post("/{lib_id}/sync")
-def sync_library(lib_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+@router.post("/{lib_id}/sync", status_code=202)
+def sync_library(
+    lib_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """Queue a full library sync (series + episodes) as a background job.
+
+    Runs in the background because syncing episodes for a whole library takes
+    far longer than an HTTP request should — progress is visible in the jobs
+    panel (job_id "library_sync").
+    """
     lib = db.query(Library).filter(Library.id == lib_id).first()
     if not lib:
         raise HTTPException(404, "Library not found")
 
-    results = {}
-
+    # Movies (Radarr) sync is a single API call — run it inline as before.
     if lib.media_type == "movies" and lib.radarr_host:
         from ..services import radarr as radarr_svc
-        results["radarr"] = radarr_svc.sync_library(db, lib)
-    else:
-        sonarr_host, sonarr_key = _lib_sonarr(db, lib)
-        if sonarr_host:
-            from ..services import sonarr as sonarr_svc
-            try:
-                raw = sonarr_svc.fetch_all_series(sonarr_host, sonarr_key)
-                synced = sonarr_svc.upsert_series_list(
-                    db, raw,
-                    library_id=lib.id,
-                    skip_translation=not lib.translation_enabled,
-                    skip_anilist=not lib.anilist_enabled,
-                )
-                results["sonarr"] = synced
-            except Exception as exc:
-                results["sonarr"] = {"error": str(exc)}
+        return {"status": "done", "radarr": radarr_svc.sync_library(db, lib)}
 
-    return results
+    sonarr_host, sonarr_key = _lib_sonarr(db, lib)
+    if not sonarr_host:
+        raise HTTPException(
+            400, "Knihovna nemá přiřazenou Sonarr službu — vyber ji v nastavení knihovny"
+        )
+
+    from ..services import job_log
+    if job_log.is_job_running("library_sync"):
+        raise HTTPException(409, "Synchronizace knihovny už běží")
+
+    background_tasks.add_task(_sync_library_task, lib.id)
+    return {"status": "queued", "library_id": lib.id}
+
+
+def _sync_library_task(lib_id: int) -> None:
+    """Full library sync: upsert series, then episodes per series, then cached
+    counts. Own DB session — runs after the request has returned."""
+    from ..database import SessionLocal
+    from ..services import job_log
+    from ..services import sonarr as sonarr_svc
+    from ..models.series import Series
+
+    db = SessionLocal()
+    run = None
+    try:
+        lib = db.query(Library).filter(Library.id == lib_id).first()
+        if not lib:
+            return
+        run = job_log.start_run("library_sync", f"Sync knihovny ({lib.name})")
+
+        sonarr_host, sonarr_key = _lib_sonarr(db, lib)
+        raw = sonarr_svc.fetch_all_series(sonarr_host, sonarr_key)
+        summary = sonarr_svc.upsert_series_list(
+            db, raw,
+            library_id=lib.id,
+            skip_translation=not lib.translation_enabled,
+            skip_anilist=not lib.anilist_enabled,
+        )
+
+        # Episodes — the part the original implementation skipped entirely,
+        # which left every series showing "0 episodes" after a library sync.
+        from .sync import _sync_episode
+        from .series import refresh_series_counts
+        total = len(raw)
+        ep_total = 0
+        for i, raw_s in enumerate(raw):
+            sonarr_id = raw_s.get("id")
+            if not sonarr_id:
+                continue
+            row = db.query(Series).filter(Series.sonarr_id == sonarr_id).first()
+            if row is None:
+                continue
+            job_log.update_progress(run.run_id, i, total, f"({i+1}/{total}) {row.title}")
+            try:
+                eps = sonarr_svc.get_episodes(sonarr_id, host=sonarr_host, api_key=sonarr_key)
+            except Exception as exc:
+                log.warning("library sync: get_episodes(%s) failed: %s", sonarr_id, exc)
+                continue
+            for ep_raw in eps:
+                _sync_episode(db, row.id, ep_raw)
+            db.commit()
+            ep_total += len(eps)
+            try:
+                refresh_series_counts(db, row, use_disk=True)
+            except Exception:
+                pass
+
+        job_log.finish_run(
+            run, "done",
+            f"{summary['created']} nových, {summary['updated']} aktualizováno, {ep_total} epizod",
+        )
+    except Exception as exc:
+        db.rollback()
+        log.error("library sync %d failed: %s", lib_id, exc)
+        if run is not None:
+            from ..services import job_log as _jl
+            _jl.finish_run(run, "error", str(exc)[:300])
+    finally:
+        db.close()
 
 
 # ── movies list ───────────────────────────────────────────────────────────────
