@@ -149,6 +149,48 @@ def test_selfheal_fixes_orphan_library():
         db.close()
 
 
+def test_public_series_detail():
+    """Public detail exposes seasons/episodes + subtitle languages, and nothing
+    internal (no file paths)."""
+    from app.database import SessionLocal
+    from app.models.series import Series, Episode, Subtitle
+
+    db = SessionLocal()
+    try:
+        s = Series(title="Test Show", sonarr_id=4242, promoted=True)
+        db.add(s)
+        db.flush()
+        ep1 = Episode(series_id=s.id, sonarr_ep_id=1, season_number=1,
+                      episode_number=1, title="Ep 1", has_file=True)
+        ep2 = Episode(series_id=s.id, sonarr_ep_id=2, season_number=1,
+                      episode_number=2, title="Ep 2", has_file=True,
+                      subtitles_in_file="eng")
+        db.add_all([ep1, ep2])
+        db.flush()
+        db.add(Subtitle(episode_id=ep1.id, language="cze",
+                        file_path="/media/secret/path.srt", format="srt"))
+        db.commit()
+        sid = s.id
+    finally:
+        db.close()
+
+    r = client.get(f"/api/public/series/{sid}")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["title"] == "Test Show"
+    assert body["season_count"] == 1
+
+    eps = body["seasons"][0]["episodes"]
+    assert [e["episode"] for e in eps] == [1, 2]
+    # "cze" normalizes to the canonical "cs"; mediaInfo "eng" -> "en"
+    assert eps[0]["subtitles"] == ["cs"]
+    assert eps[1]["subtitles"] == ["en"]
+    # No internal data leaks into the public payload.
+    assert "secret" not in r.text and "file_path" not in r.text
+
+    assert client.get("/api/public/series/999999").status_code == 404
+
+
 def test_system_diag():
     r = client.get("/api/system/diag", headers=_auth())
     assert r.status_code == 200, r.text

@@ -129,37 +129,103 @@ function buildCard(tab, item) {
 const detailModal   = document.getElementById("detail-modal");
 const detailContent = document.getElementById("detail-content");
 
-function openDetail(item) {
-  if (!item.overview && !item.genres) return; // request-cache items have nothing to show
+// Language code -> human label shown on subtitle pills.
+const LANG_LABEL = {
+  cs: "CZ", sk: "SK", en: "EN", ja: "JP", de: "DE",
+  fr: "FR", pl: "PL", hu: "HU", ru: "RU", zh: "ZH", ko: "KO",
+};
+
+function langPill(code) {
+  const pill = document.createElement("span");
+  pill.className = "lang-pill" + (code === "cs" ? " lang-cs" : "");
+  pill.textContent = LANG_LABEL[code] || code.toUpperCase();
+  return pill;
+}
+
+function statLine(label, value) {
+  const row = document.createElement("div");
+  row.className = "detail-stat";
+  const l = document.createElement("span");
+  l.className = "detail-stat-label";
+  l.textContent = label;
+  const v = document.createElement("span");
+  v.className = "detail-stat-value";
+  v.textContent = value;
+  row.appendChild(l);
+  row.appendChild(v);
+  return row;
+}
+
+async function openDetail(item) {
+  // Seerr request rows aren't local series (no `genres` key) — nothing to fetch.
+  // Every series card has genres (possibly empty), so it always opens.
+  if (item.id == null || item.genres === undefined) return;
+
+  detailContent.innerHTML = "";
+  detailModal.classList.remove("hidden");
+
+  const loadingEl = document.createElement("div");
+  loadingEl.className = "loading";
+  loadingEl.textContent = "Načítám…";
+  detailContent.appendChild(loadingEl);
+
+  let data = item;
+  try {
+    const res = await fetch(`${API_BASE}/series/${item.id}`);
+    if (res.ok) data = await res.json();
+  } catch { /* fall back to the card data we already have */ }
+
   detailContent.innerHTML = "";
 
   const header = document.createElement("div");
   header.className = "detail-header";
 
-  if (item.poster_url) {
+  if (data.poster_url) {
     const img = document.createElement("img");
     img.className = "detail-poster";
-    img.src = item.poster_url;
+    img.src = data.poster_url;
     header.appendChild(img);
   }
 
   const info = document.createElement("div");
   const h2 = document.createElement("h2");
   h2.className = "detail-title";
-  h2.textContent = item.title;
+  h2.textContent = data.title;
   info.appendChild(h2);
 
-  if (item.overview) {
+  // ── Stats: seasons, episodes, files, subtitle coverage ────────────────────
+  const seasons = data.seasons || [];
+  const allEps = seasons.flatMap(s => s.episodes || []);
+  const withSubs = allEps.filter(e => (e.subtitles || []).length > 0).length;
+  const withCs = allEps.filter(e => (e.subtitles || []).includes("cs")).length;
+
+  const stats = document.createElement("div");
+  stats.className = "detail-stats";
+  const seasonCount = data.season_count || seasons.filter(s => s.season > 0).length;
+  if (seasonCount) stats.appendChild(statLine("Sérií", String(seasonCount)));
+  if (allEps.length) {
+    stats.appendChild(statLine("Dílů", String(allEps.length)));
+    stats.appendChild(statLine("Se souborem", `${allEps.filter(e => e.has_file).length}/${allEps.length}`));
+    stats.appendChild(statLine("S titulky", `${withSubs}/${allEps.length}`));
+    stats.appendChild(statLine("České titulky", `${withCs}/${allEps.length}`));
+  } else if (data.episode_count) {
+    stats.appendChild(statLine("Dílů", String(data.episode_count)));
+  }
+  if (data.year)   stats.appendChild(statLine("Rok", String(data.year)));
+  if (data.status) stats.appendChild(statLine("Stav", data.status));
+  info.appendChild(stats);
+
+  if (data.overview) {
     const p = document.createElement("p");
     p.className = "detail-overview";
-    p.textContent = item.overview;
+    p.textContent = data.overview;
     info.appendChild(p);
   }
 
-  if (item.genres && item.genres.length) {
+  if (data.genres && data.genres.length) {
     const genresWrap = document.createElement("div");
     genresWrap.className = "detail-genres";
-    for (const g of item.genres) {
+    for (const g of data.genres) {
       const pill = document.createElement("span");
       pill.className = "genre-pill";
       pill.textContent = g;
@@ -170,7 +236,49 @@ function openDetail(item) {
 
   header.appendChild(info);
   detailContent.appendChild(header);
-  detailModal.classList.remove("hidden");
+
+  // ── Per-season episode list with subtitle languages ───────────────────────
+  for (const season of seasons) {
+    if (!season.episodes || !season.episodes.length) continue;
+
+    const h3 = document.createElement("h3");
+    h3.className = "season-title";
+    h3.textContent = season.season === 0 ? "Speciály" : `Série ${season.season}`;
+    detailContent.appendChild(h3);
+
+    const list = document.createElement("div");
+    list.className = "episode-list";
+
+    for (const ep of season.episodes) {
+      const row = document.createElement("div");
+      row.className = "episode-row";
+
+      const num = document.createElement("span");
+      num.className = "episode-num";
+      num.textContent = String(ep.episode ?? "?").padStart(2, "0") + ".";
+      row.appendChild(num);
+
+      const title = document.createElement("span");
+      title.className = "episode-title";
+      title.textContent = ep.title || "—";
+      row.appendChild(title);
+
+      const langs = document.createElement("span");
+      langs.className = "episode-langs";
+      if (ep.subtitles && ep.subtitles.length) {
+        for (const code of ep.subtitles) langs.appendChild(langPill(code));
+      } else {
+        const none = document.createElement("span");
+        none.className = "lang-pill lang-none";
+        none.textContent = "bez titulků";
+        langs.appendChild(none);
+      }
+      row.appendChild(langs);
+
+      list.appendChild(row);
+    }
+    detailContent.appendChild(list);
+  }
 }
 
 document.getElementById("detail-close").addEventListener("click", () => {
