@@ -1,5 +1,7 @@
 import logging
+import secrets
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
@@ -9,15 +11,53 @@ log = logging.getLogger("anisubarr.config")
 _DEFAULT_JWT_SECRET = "change-me-in-production"
 
 
+def _data_dir(database_url: str) -> Path:
+    """Directory holding persistent state (the SQLite file's directory)."""
+    if database_url.startswith("sqlite:///"):
+        raw = database_url[len("sqlite:///"):]
+        p = Path(raw)
+        if not p.is_absolute():
+            p = Path(__file__).parent.parent / raw  # relative to backend/
+        return p.parent
+    return Path(__file__).parent.parent / "data"
+
+
+def _load_or_create_jwt_secret(database_url: str) -> str:
+    """Persist an auto-generated JWT secret next to the DB so sessions survive
+    restarts even when JWT_SECRET isn't set in the environment. Falls back to a
+    per-process random secret (with a loud warning) if the dir isn't writable —
+    degraded (logins reset on restart) but never a crash-loop."""
+    try:
+        d = _data_dir(database_url)
+        d.mkdir(parents=True, exist_ok=True)
+        f = d / "jwt_secret"
+        if f.is_file():
+            val = f.read_text(encoding="utf-8").strip()
+            if val:
+                return val
+        val = secrets.token_urlsafe(48)
+        f.write_text(val, encoding="utf-8")
+        try:
+            f.chmod(0o600)
+        except OSError:
+            pass
+        log.warning("JWT_SECRET not set — generated one and stored it in %s", f)
+        return val
+    except Exception as exc:
+        log.error(
+            "JWT_SECRET not set and could not persist a generated one (%s) — "
+            "using a per-process secret; sessions will reset on restart. "
+            "Set JWT_SECRET in the environment to fix this permanently.", exc
+        )
+        return secrets.token_urlsafe(48)
+
+
 class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _check_jwt_secret(self) -> "Settings":
-        if self.jwt_secret == _DEFAULT_JWT_SECRET:
-            raise ValueError(
-                "JWT secret is set to the insecure default value. "
-                "Set JWT_SECRET in your .env file to a strong random string."
-            )
+        if not self.jwt_secret or self.jwt_secret == _DEFAULT_JWT_SECRET:
+            self.jwt_secret = _load_or_create_jwt_secret(self.database_url)
         return self
 
     @model_validator(mode="after")

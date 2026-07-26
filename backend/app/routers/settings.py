@@ -262,6 +262,13 @@ def save_settings(
 
     db.commit()
 
+    # Keep the on-disk settings.yaml mirror in sync (non-secret keys only).
+    try:
+        from ..services.config_file import export_settings
+        export_settings(db)
+    except Exception:
+        pass
+
     # Path/SMB prefixes are cached in path_resolver — drop that cache so changes
     # take effect immediately instead of after the short TTL.
     if any(k in saved for k in (

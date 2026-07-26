@@ -30,7 +30,7 @@ from .routers import (
     downloads, glossary, video_stream, episode_markers, logs,
     qbittorrent, search, dashboard,
     quick_add, discover, watchlist, audit,
-    libraries, public, newsletter_admin, backup, services,
+    libraries, public, newsletter_admin, backup, services, system,
 )
 
 settings = get_settings()
@@ -106,6 +106,22 @@ async def lifespan(app: FastAPI):
     _migrate_add_promoted_at()
     _migrate_seerr_settings()
     _seed_service_registry()
+    # settings.yaml (editable config mirror) + startup self-heal
+    try:
+        from .database import SessionLocal as _SL2
+        from .services.config_file import import_settings_if_changed
+        from .services.selfheal import run_startup_checks
+        from .routers import system as _system_router
+        _db2 = _SL2()
+        try:
+            n_yaml = import_settings_if_changed(_db2)
+            if n_yaml:
+                print(f"[config] settings.yaml: {n_yaml} keys imported")
+            _system_router.last_selfheal = run_startup_checks(_db2)
+        finally:
+            _db2.close()
+    except Exception as _exc:
+        print(f"[WARN] settings.yaml/selfheal startup pass skipped: {_exc}")
     from .services import job_log as _jl
     _jl.cleanup_stale_running()
     _jl.wal_checkpoint()
@@ -195,6 +211,7 @@ app.include_router(libraries.router)
 app.include_router(public.router)
 app.include_router(newsletter_admin.router)
 app.include_router(backup.router)
+app.include_router(system.router)
 app.include_router(services.router)
 
 
