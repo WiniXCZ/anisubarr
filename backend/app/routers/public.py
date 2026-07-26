@@ -147,6 +147,69 @@ def public_issues(db: Session = Depends(get_db)):
     return {"results": [_series_card(s) for s in rows]}
 
 
+def _norm_lang(code: str | None) -> str | None:
+    """Normalize a subtitle language token to a short canonical code (cs/en/…)."""
+    c = (code or "").strip().lower()
+    if not c or c == "??":
+        return None
+    from ..utils import CS_NAMES
+    if c in CS_NAMES:
+        return "cs"
+    from .subtitles import _LANG_ALIASES
+    for canon, variants in _LANG_ALIASES.items():
+        if c in variants:
+            return canon
+    return c[:3]
+
+
+@router.get("/series/{series_id}")
+def public_series_detail(series_id: int, db: Session = Depends(get_db)):
+    """Public detail of one series: seasons, episodes, and which subtitle
+    languages each episode has. Deliberately exposes no internal data —
+    no file paths, no Sonarr/Emby ids, no user info."""
+    from sqlalchemy.orm import subqueryload
+    from ..models.series import Series, Episode
+
+    s = (
+        db.query(Series)
+        .options(subqueryload(Series.episodes).subqueryload(Episode.subtitles))
+        .filter(Series.id == series_id)
+        .first()
+    )
+    if not s:
+        raise HTTPException(404, "Série nenalezena")
+
+    seasons: dict[int, list] = {}
+    for ep in s.episodes:
+        langs: set[str] = set()
+        for sub in ep.subtitles:
+            lang = _norm_lang(sub.detected_lang or sub.language)
+            if lang:
+                langs.add(lang)
+        # Embedded tracks reported by Sonarr's mediaInfo (e.g. "cze / eng")
+        for token in (ep.subtitles_in_file or "").replace("/", ",").split(","):
+            lang = _norm_lang(token)
+            if lang:
+                langs.add(lang)
+        seasons.setdefault(ep.season_number or 0, []).append({
+            "episode":   ep.episode_number,
+            "title":     ep.title,
+            "air_date":  ep.air_date,
+            "has_file":  bool(ep.has_file),
+            "subtitles": sorted(langs),
+        })
+
+    out_seasons = [
+        {"season": sn, "episodes": sorted(eps, key=lambda e: e["episode"] or 0)}
+        for sn, eps in sorted(seasons.items())
+    ]
+
+    card = _series_card(s)
+    card["seasons"] = out_seasons
+    card["season_count"] = sum(1 for sn in seasons if sn > 0) or len(seasons)
+    return card
+
+
 @router.get("/published")
 def public_published(db: Session = Depends(get_db)):
     """Fully subtitled series — the actual public library."""
