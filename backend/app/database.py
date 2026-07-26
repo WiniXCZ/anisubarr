@@ -85,6 +85,8 @@ def _migrate_add_columns():
         "CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON series_audit_log (series_id, created_at)",
         "ALTER TABLE series ADD COLUMN library_id INTEGER REFERENCES libraries(id)",
         "CREATE INDEX IF NOT EXISTS idx_series_library_id ON series (library_id)",
+        "ALTER TABLE services ADD COLUMN sort_order INTEGER DEFAULT 0",
+        "ALTER TABLE services ADD COLUMN extra VARCHAR",
         "CREATE INDEX IF NOT EXISTS idx_movies_library_id ON movies (library_id)",
         "ALTER TABLE libraries ADD COLUMN sonarr_service_id INTEGER",
         "CREATE INDEX IF NOT EXISTS idx_libraries_sonarr_service_id ON libraries (sonarr_service_id)",

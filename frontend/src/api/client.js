@@ -183,7 +183,9 @@ export const updateSettings    = (data)   => api.put("/settings", data);
 export const testConnection    = (svc, body) => api.post(`/settings/test/${svc}`, body);
 
 // ── Services (connection registry) ────────
-export const getServices        = (type)   => api.get("/services", { params: type ? { type } : {} });
+export const getServices        = (type, category) => api.get("/services", {
+  params: { ...(type ? { type } : {}), ...(category ? { category } : {}) },
+});
 export const createService      = (data)   => api.post("/services", data);
 export const updateService      = (id, d)  => api.patch(`/services/${id}`, d);
 export const deleteService      = (id)     => api.delete(`/services/${id}`);

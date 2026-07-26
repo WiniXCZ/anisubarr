@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_current_user, require_admin
-from ..models.service import Service, SERVICE_TYPES
+from ..models.service import Service, SERVICE_TYPES, SUBTITLE_PROVIDER_TYPES
 from ..models.user import User
 
 log = logging.getLogger("anisubarr.services")
@@ -37,6 +37,8 @@ class ServiceCreate(BaseModel):
     password: Optional[str] = None
     enabled: bool = True
     is_default: bool = False
+    sort_order: int = 0
+    extra: Optional[str] = None       # provider-specific (e.g. Kamui RAR password)
 
 
 class ServiceUpdate(BaseModel):
@@ -48,6 +50,8 @@ class ServiceUpdate(BaseModel):
     password: Optional[str] = None
     enabled: Optional[bool] = None
     is_default: Optional[bool] = None
+    sort_order: Optional[int] = None
+    extra: Optional[str] = None
 
 
 def _out(s: Service) -> dict:
@@ -61,6 +65,9 @@ def _out(s: Service) -> dict:
         "password": _MASK if s.password else None,
         "enabled": s.enabled,
         "is_default": s.is_default,
+        "sort_order": s.sort_order or 0,
+        "extra": _MASK if s.extra else None,
+        "is_provider": s.type in SUBTITLE_PROVIDER_TYPES,
         "created_at": s.created_at.isoformat() if s.created_at else None,
     }
 
@@ -79,13 +86,20 @@ def _clear_other_defaults(db: Session, service_type: str, keep_id: Optional[int]
 @router.get("")
 def list_services(
     type: Optional[str] = None,
+    category: Optional[str] = None,   # "provider" | "service"
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    """List registry entries. `category=provider` returns subtitle sources,
+    `category=service` the integrations (Sonarr, Emby, …)."""
     q = db.query(Service)
     if type:
         q = q.filter(Service.type == type)
-    return [_out(s) for s in q.order_by(Service.type, Service.id).all()]
+    if category == "provider":
+        q = q.filter(Service.type.in_(SUBTITLE_PROVIDER_TYPES))
+    elif category == "service":
+        q = q.filter(Service.type.notin_(SUBTITLE_PROVIDER_TYPES))
+    return [_out(s) for s in q.order_by(Service.sort_order, Service.type, Service.id).all()]
 
 
 @router.post("", status_code=201)
@@ -118,7 +132,7 @@ def update_service(svc_id: int, body: ServiceUpdate, db: Session = Depends(get_d
         raise HTTPException(404, "Služba nenalezena")
     data = body.model_dump(exclude_none=True)
     # Ignore masked secrets echoed back from the UI — don't overwrite with "••••".
-    for secret in ("api_key", "password"):
+    for secret in ("api_key", "password", "extra"):
         if data.get(secret) and data[secret].startswith(_MASK):
             data.pop(secret)
     if data.get("type") and data["type"] not in SERVICE_TYPES:

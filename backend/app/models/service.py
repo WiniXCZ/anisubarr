@@ -17,7 +17,16 @@ from ..database import Base
 
 # Known service types. Kept permissive (plain string column) so adding a new
 # type later doesn't need a migration, but this list drives UI/validation.
-SERVICE_TYPES = ("sonarr", "radarr", "prowlarr", "jackett", "qbittorrent", "emby", "seerr")
+SERVICE_TYPES = (
+    # Integrations (host + api_key)
+    "sonarr", "radarr", "prowlarr", "jackett", "qbittorrent", "emby", "seerr",
+    # Subtitle providers (username + password; no host — the site is fixed)
+    "hiyori", "hns", "kamui", "gensubs",
+)
+
+# Types that are subtitle sources rather than service integrations. They share
+# this table so the registry, CRUD and UI stay one mechanism instead of two.
+SUBTITLE_PROVIDER_TYPES = ("hiyori", "hns", "kamui", "gensubs")
 
 
 class Service(Base):
@@ -32,6 +41,8 @@ class Service(Base):
     password   = Column(String, nullable=True)
     enabled    = Column(Boolean, default=True,  nullable=False)
     is_default = Column(Boolean, default=False, nullable=False)  # default instance of its type
+    sort_order = Column(Integer, default=0, nullable=False)      # provider priority (lower = tried first)
+    extra      = Column(String, nullable=True)                   # provider-specific extra (e.g. Kamui RAR password)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
