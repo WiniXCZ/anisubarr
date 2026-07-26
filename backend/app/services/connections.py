@@ -76,6 +76,81 @@ def resolve_qbittorrent(db: Session) -> tuple[str, str, str]:
     )
 
 
+# ── Subtitle providers ───────────────────────────────────────────────────────
+# Providers live in the same registry as service integrations (type = hiyori /
+# hns / kamui / gensubs, credentials in username/password). Legacy installs kept
+# them as flat <provider>_username / <provider>_password settings; both are read
+# here so nothing breaks before the seeding migration runs.
+
+_PROVIDER_EXTRA_KEY = {"kamui": "kamui_rar_password"}
+
+
+def resolve_provider(db: Session, provider: str) -> tuple[str, str, str]:
+    """Return (username, password, extra) for a subtitle provider."""
+    from ..models.service import Service
+    svc = (
+        db.query(Service)
+        .filter(Service.type == provider, Service.enabled == True)  # noqa: E712
+        .order_by(Service.sort_order, Service.id)
+        .first()
+    )
+    if svc and (svc.username or svc.password):
+        return (svc.username or ""), (svc.password or ""), (svc.extra or "")
+
+    from ..routers.settings import _get_setting
+    extra_key = _PROVIDER_EXTRA_KEY.get(provider)
+    return (
+        _get_setting(db, f"{provider}_username") or "",
+        _get_setting(db, f"{provider}_password") or "",
+        (_get_setting(db, extra_key) or "") if extra_key else "",
+    )
+
+
+def enabled_provider_order(db: Session) -> list[str] | None:
+    """Provider types to try, in priority order, or None when the registry
+    holds no providers yet (caller then falls back to the legacy setting)."""
+    from ..models.service import Service, SUBTITLE_PROVIDER_TYPES
+    rows = (
+        db.query(Service)
+        .filter(Service.type.in_(SUBTITLE_PROVIDER_TYPES))
+        .order_by(Service.sort_order, Service.id)
+        .all()
+    )
+    if not rows:
+        return None
+    return [r.type for r in rows if r.enabled]
+
+
+def migrate_legacy_providers(db: Session) -> int:
+    """Seed subtitle providers into the registry from flat legacy settings."""
+    from ..models.service import Service, SUBTITLE_PROVIDER_TYPES
+    from ..routers.settings import _get_setting
+
+    labels = {"hiyori": "Hiyori.cz", "hns": "HnS.sk",
+              "kamui": "Kamui-subs.cz", "gensubs": "GenSubs"}
+    created = 0
+    for order, ptype in enumerate(SUBTITLE_PROVIDER_TYPES):
+        if db.query(Service).filter(Service.type == ptype).first():
+            continue
+        user = (_get_setting(db, f"{ptype}_username") or "").strip()
+        pwd = (_get_setting(db, f"{ptype}_password") or "").strip()
+        if not user and not pwd:
+            continue  # not configured — don't create an empty row
+        extra_key = _PROVIDER_EXTRA_KEY.get(ptype)
+        db.add(Service(
+            name=labels.get(ptype, ptype), type=ptype,
+            username=user or None, password=pwd or None,
+            extra=(_get_setting(db, extra_key) or None) if extra_key else None,
+            enabled=True, sort_order=order,
+        ))
+        created += 1
+
+    if created:
+        db.commit()
+        log.info("[connections] seeded %d subtitle provider(s) from legacy config", created)
+    return created
+
+
 def migrate_legacy_config(db: Session) -> int:
     """Seed the registry from existing global settings on first run.
 

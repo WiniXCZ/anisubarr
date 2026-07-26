@@ -93,6 +93,10 @@ def _seed_service_registry() -> None:
             n = migrate_legacy_config(db)
             if n:
                 print(f"[migrate] Seeded {n} service(s) into the connection registry")
+            from .services.connections import migrate_legacy_providers
+            np = migrate_legacy_providers(db)
+            if np:
+                print(f"[migrate] Seeded {np} subtitle provider(s) into the registry)")
         finally:
             db.close()
     except Exception as exc:

@@ -15,6 +15,7 @@ import {
 } from '../v1design';
 import LibrariesSettings from './LibrariesSettings';
 import ServicesTable from '../components/ServicesTable';
+import ProvidersTable from '../components/ProvidersTable';
 import { LANGUAGE_OPTIONS } from '../i18n/translations';
 import { useT } from '../i18n/I18nContext';
 
@@ -91,91 +92,12 @@ const CATEGORIES = [
 ];
 
 
-function IndexerBlock({ title, url, usernameKey, passwordKey, extraFields = [], fields, setFields }) {
-  const t = useT();
-  return (
-    <SettingsGroup theme={T} title={title} sub={<span style={{font:'11px JetBrains Mono',color:T.textMute}}>{url}</span>}>
-      <SettingsRow theme={T} label={t('set_idx_username_label')}
-        control={<TextField theme={T} value={fields[usernameKey] || ''} width={240} mono
-          placeholder="username"
-          onChange={v => setFields(p => ({...p, [usernameKey]: v}))}/>}/>
-      <SettingsRow theme={T} last={extraFields.length === 0} label={t('set_idx_password_label')}
-        control={<TextField theme={T} value={fields[passwordKey] || ''} width={240} mono
-          type={fields[passwordKey] && !fields[passwordKey].startsWith('••••') ? 'password' : 'text'}
-          placeholder="••••••••"
-          onChange={v => setFields(p => ({...p, [passwordKey]: v}))}/>}/>
-      {extraFields.map(({key, label, placeholder}, i) => (
-        <SettingsRow key={key} theme={T} last={i === extraFields.length - 1} label={label}
-          control={<TextField theme={T} value={fields[key] || ''} width={240} mono
-            placeholder={placeholder || ''}
-            onChange={v => setFields(p => ({...p, [key]: v}))}/>}/>
-      ))}
-    </SettingsGroup>
-  );
-}
-
 function IndexersSection() {
-  const t = useT();
-  const qc = useQueryClient();
-  const toast = useToast();
-
-  const { data: cfg = {} } = useQuery({
-    queryKey: ['app-settings'],
-    queryFn: () => getAppSettings().then(r => r.data ?? r),
-  });
-
-  const [fields, setFields] = useState({});
-  const f = { ...cfg, ...fields };
-
-  const saveMutation = useMutation({
-    mutationFn: () => {
-      const payload = {};
-      for (const [k, v] of Object.entries(fields)) {
-        if (v && !v.startsWith('••••')) payload[k] = v;
-        else if (v === '') payload[k] = '';
-      }
-      return updateSettings(payload);
-    },
-    onSuccess: () => {
-      toast.success(t('set_idx_toast_saved'));
-      qc.invalidateQueries(['app-settings']);
-      setFields({});
-    },
-    onError: (e) => toast.error(e?.response?.data?.detail || t('set_idx_toast_save_error')),
-  });
-
-  const dirty = Object.keys(fields).length > 0;
-
+  // Providers are registry-backed now (same mechanism as Připojení → Služby),
+  // so this section is just the table — no flat per-provider settings blocks.
   return (
     <div style={{display:'flex',flexDirection:'column',gap:18}}>
-      <IndexerBlock
-        title="Hiyori.cz" url="hiyori.cz"
-        usernameKey="hiyori_username" passwordKey="hiyori_password"
-        fields={f} setFields={setFields}
-      />
-      <IndexerBlock
-        title="HnS.sk" url="hns.sk"
-        usernameKey="hns_username" passwordKey="hns_password"
-        fields={f} setFields={setFields}
-      />
-      <IndexerBlock
-        title="Kamui-subs.cz" url="kamui-subs.cz"
-        usernameKey="kamui_username" passwordKey="kamui_password"
-        extraFields={[{ key:'kamui_rar_password', label:t('set_idx_rar_password_label'), placeholder:'kamui' }]}
-        fields={f} setFields={setFields}
-      />
-      <SettingsGroup theme={T} title="GenSubs" sub={t('set_idx_gensubs_sub')}>
-        <SettingsRow theme={T} last label=" "
-          control={<StatusPill theme={T} color={T.statusDone} label={t('set_idx_available_no_account')} dot/>}/>
-      </SettingsGroup>
-      {dirty && (
-        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
-          <button onClick={() => setFields({})} style={btnGhost(T)}>{t('common_discard')}</button>
-          <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} style={btnPrimary(T)}>
-            {saveMutation.isPending ? t('common_saving') : t('common_save')}
-          </button>
-        </div>
-      )}
+      <ProvidersTable/>
     </div>
   );
 }

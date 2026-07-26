@@ -92,31 +92,68 @@ def _scraper_timeout(db=None) -> int:
         return 30
 
 
+def _provider_creds(provider: str, db=None) -> tuple[str, str, str]:
+    """(username, password, extra) for a provider: registry → DB setting → .env.
+
+    A provider disabled in Připojení → Poskytovatelé resolves to empty
+    credentials, so its factory returns None and it is skipped entirely.
+    """
+    if db is not None:
+        try:
+            from ..services import connections
+            u, p, extra = connections.resolve_provider(db, provider)
+            if u or p:
+                return u, p, extra
+        except Exception:
+            pass
+    u = _read_setting(f"{provider}_username", db) or getattr(settings, f"{provider}_username", "")
+    p = _read_setting(f"{provider}_password", db) or getattr(settings, f"{provider}_password", "")
+    extra = ""
+    if provider == "kamui":
+        extra = _read_setting("kamui_rar_password", db) or settings.kamui_rar_password or ""
+    return u, p, extra
+
+
+def _provider_enabled(provider: str, db=None) -> bool:
+    """False when the provider exists in the registry but is switched off."""
+    if db is None:
+        return True
+    try:
+        from ..models.service import Service
+        row = db.query(Service).filter(Service.type == provider).first()
+        return bool(row.enabled) if row else True
+    except Exception:
+        return True
+
+
 def _hiyori(db=None) -> HiyoriScraper | None:
-    u = _read_setting("hiyori_username", db) or settings.hiyori_username
-    p = _read_setting("hiyori_password", db) or settings.hiyori_password
+    if not _provider_enabled("hiyori", db):
+        return None
+    u, p, _ = _provider_creds("hiyori", db)
     if u and p:
         return HiyoriScraper(u, p, timeout=_scraper_timeout(db))
     return None
 
 def _hns(db=None) -> HnsScraper | None:
-    u = _read_setting("hns_username", db) or settings.hns_username
-    p = _read_setting("hns_password", db) or settings.hns_password
+    if not _provider_enabled("hns", db):
+        return None
+    u, p, _ = _provider_creds("hns", db)
     if u and p:
         return HnsScraper(u, p, timeout=_scraper_timeout(db))
     return None
 
 def _kamui(db=None) -> KamuiScraper | None:
-    u = _read_setting("kamui_username", db) or settings.kamui_username
-    p = _read_setting("kamui_password", db) or settings.kamui_password
-    r = _read_setting("kamui_rar_password", db) or settings.kamui_rar_password or "kamui"
+    if not _provider_enabled("kamui", db):
+        return None
+    u, p, r = _provider_creds("kamui", db)
     if u and p:
-        return KamuiScraper(u, p, rar_password=r, timeout=_scraper_timeout(db))
+        return KamuiScraper(u, p, rar_password=r or "kamui", timeout=_scraper_timeout(db))
     return None
 
-def _gensubs(db=None) -> GenSubsScraper:
-    u = _read_setting("gensubs_username", db) or getattr(settings, "gensubs_username", "")
-    p = _read_setting("gensubs_password", db) or getattr(settings, "gensubs_password", "")
+def _gensubs(db=None) -> GenSubsScraper | None:
+    if not _provider_enabled("gensubs", db):
+        return None
+    u, p, _ = _provider_creds("gensubs", db)
     return GenSubsScraper(u, p)
 
 
@@ -135,6 +172,15 @@ def _get_provider_order(db=None) -> list[str]:
     not "any"/empty), that provider is moved to the front of the order —
     it acts as an override for auto-download.
     """
+    if db is not None:
+        try:
+            from ..services import connections
+            registry_order = connections.enabled_provider_order(db)
+            if registry_order is not None:
+                return registry_order
+        except Exception:
+            pass
+
     raw = (
         _read_setting("scraper_provider_order", db)
         or _read_setting("subtitle_provider_priority", db)
