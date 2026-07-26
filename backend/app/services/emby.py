@@ -15,35 +15,21 @@ log = logging.getLogger(__name__)
 
 def _get_config() -> tuple[str, str] | tuple[None, None]:
     """
-    Return (host, api_key) from DB settings (preferred) or .env fallback.
+    Return (host, api_key) for Emby/Jellyfin. Resolves through the connection
+    registry (Připojení → Služby) first, then legacy DB settings / .env.
     Returns (None, None) if Emby is not configured.
     """
     host = api_key = None
-
-    # Try DB-stored settings first
     try:
         from ..database import SessionLocal
-        from ..models.app_settings import AppSetting
+        from . import connections
         db = SessionLocal()
         try:
-            h = db.query(AppSetting).filter(AppSetting.key == "emby_host").first()
-            k = db.query(AppSetting).filter(AppSetting.key == "emby_api_key").first()
-            host    = (h.value or "").strip() if h else ""
-            api_key = (k.value or "").strip() if k else ""
+            host, api_key = connections.resolve_emby(db)
         finally:
             db.close()
     except Exception:
         pass
-
-    # Fall back to .env / environment variables
-    if not host or not api_key:
-        try:
-            from ..config import get_settings
-            cfg     = get_settings()
-            host    = host    or (getattr(cfg, "emby_host",    "") or "").strip()
-            api_key = api_key or (getattr(cfg, "emby_api_key", "") or "").strip()
-        except Exception:
-            pass
 
     if not host or not api_key:
         return None, None

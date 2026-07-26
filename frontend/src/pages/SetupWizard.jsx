@@ -78,7 +78,12 @@ function ServiceBlock({ svc, state, setState, t }) {
   async function handleTest() {
     setTesting(true);
     try {
-      const body = { type: svc.type, host: state.host, api_key: state.api_key || "" };
+      const body = {
+        type: svc.type, host: state.host,
+        api_key: state.api_key || undefined,
+        username: state.username || undefined,
+        password: state.password || undefined,
+      };
       const res = await testServiceUnsaved(body);
       setState({ ...state, test: res.data });
     } catch {

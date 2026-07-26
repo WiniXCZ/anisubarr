@@ -27,12 +27,12 @@ async def emby_status(_: User = Depends(get_current_user)):
     Otestuje připojení k Emby / Jellyfin.
     Volá GET {emby_host}/System/Info/Public a vrátí základní info.
     """
-    cfg = get_settings()
+    host, _key = _get_config()
 
-    if not cfg.emby_host:
+    if not host:
         return {"connected": False, "reason": "not_configured"}
 
-    url = cfg.emby_host.rstrip("/") + "/System/Info/Public"
+    url = host.rstrip("/") + "/System/Info/Public"
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:

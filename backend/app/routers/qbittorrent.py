@@ -63,10 +63,9 @@ async def _qbt_login(url: str, username: str, password: str) -> tuple[str | None
 
 
 def _get_qbt_config(db: Session) -> tuple[str, str, str]:
-    """Vrátí (url, username, password) z DB nastavení."""
-    url = _get_setting(db, "qbittorrent_url") or _get_setting(db, "qbittorrent_host") or ""
-    username = _get_setting(db, "qbittorrent_username") or ""
-    password = _get_setting(db, "qbittorrent_password") or ""
+    """Vrátí (url, username, password) — registr Služeb, pak legacy nastavení."""
+    from ..services import connections
+    url, username, password = connections.resolve_qbittorrent(db)
     if url and not url.startswith("http"):
         url = "http://" + url
     return url, username, password

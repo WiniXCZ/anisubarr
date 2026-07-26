@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  getServices, createService, updateService, deleteService, testServiceUnsaved,
+  getServices, createService, updateService, deleteService, testServiceUnsaved, testService,
 } from '../api/client';
 import { useToast } from '../context/ToastContext';
 import { THEME as T, btnPrimary, btnSub, btnGhost, StatusPill, TextField, SelectField } from '../v1design';
@@ -141,11 +141,22 @@ function ServiceModal({ service, onClose, onSaved }) {
   async function handleTest() {
     setBusy(true); setTestResult(null);
     try {
-      const body = {
-        type: form.type, host: form.host,
-        api_key: (form.api_key && !String(form.api_key).startsWith(MASK)) ? form.api_key : undefined,
-      };
-      const r = await testServiceUnsaved(body);
+      const keyUntouched  = !form.api_key  || String(form.api_key).startsWith(MASK);
+      const passUntouched = !form.password || String(form.password).startsWith(MASK);
+      const hostUnchanged = !isNew && form.host === service.host;
+      let r;
+      if (hostUnchanged && (creds ? passUntouched : keyUntouched)) {
+        // Secrets are still the mask — test the saved service with its stored
+        // credentials instead of sending the mask (which would always fail).
+        r = await testService(service.id);
+      } else {
+        r = await testServiceUnsaved({
+          type: form.type, host: form.host,
+          api_key: keyUntouched ? undefined : form.api_key,
+          username: creds ? (form.username || undefined) : undefined,
+          password: (creds && !passUntouched) ? form.password : undefined,
+        });
+      }
       setTestResult(r.data ?? r);
     } catch {
       setTestResult({ connected: false, reason: 'Požadavek selhal' });
