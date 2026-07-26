@@ -55,7 +55,6 @@ const CATEGORIES = [
     items: [
       { id:'connections', labelKey:'set_item_connections', icon:'⚡' },
       { id:'sonarr_adv',  labelKey:'set_item_sonarr_adv',  icon:'▷' },
-      { id:'downloads',   labelKey:'set_item_downloads',   icon:'↓' },
       { id:'discord',     labelKey:'set_item_discord',     icon:'💬' },
     ],
   },
@@ -469,85 +468,6 @@ function ProfileSection() {
       <SettingsRow theme={T} label={t('set_prof_role_label')}
         control={<StatusPill theme={T} color={T.accent} label={me?.is_admin ? t('set_prof_role_admin') : t('set_prof_role_user')} size="sm"/>}
         last/>
-    </SettingsGroup>
-  );
-}
-
-function ServiceBlock({ title, hostKey, keyKey, extraFields, fields, setFields, onTest, testResult, saving }) {
-  const t = useT();
-  const statusColor = testResult === null ? T.textMute
-    : testResult?.connected ? T.statusDone : T.statusEnded;
-  const statusLabel = testResult === null ? '—'
-    : testResult?.connected
-      ? `✓ OK${testResult.version ? ' · v' + testResult.version : ''}`
-      : `✕ ${testResult?.reason || t('set_conn_error_fallback')}`;
-
-  return (
-    <SettingsGroup theme={T} title={title} sub={
-      <span style={{display:'flex',alignItems:'center',gap:8}}>
-        <StatusPill theme={T} color={statusColor} label={statusLabel} size="sm"/>
-      </span>
-    }>
-      <SettingsRow theme={T} label={t('set_conn_host_label')}
-        control={<TextField theme={T} value={fields[hostKey] || ''} width={280} mono
-          placeholder="http://192.168.1.x:port"
-          onChange={v => setFields(p => ({...p, [hostKey]: v}))}/>}/>
-      <SettingsRow theme={T} label={t('set_conn_api_key_label')}
-        control={<TextField theme={T} value={fields[keyKey] || ''} width={280} mono
-          placeholder="••••••••"
-          onChange={v => setFields(p => ({...p, [keyKey]: v}))}/>}/>
-      {(extraFields || []).map(({key, label, placeholder}) => (
-        <SettingsRow key={key} theme={T} label={label}
-          control={<TextField theme={T} value={fields[key] || ''} width={280} mono
-            placeholder={placeholder || ''}
-            onChange={v => setFields(p => ({...p, [key]: v}))}/>}/>
-      ))}
-      <SettingsRow theme={T} last label=" "
-        control={
-          <button onClick={onTest} disabled={saving}
-            style={{...btnSub(T), fontSize:11, padding:'5px 12px'}}>
-            {t('set_conn_test_btn')}
-          </button>
-        }/>
-    </SettingsGroup>
-  );
-}
-
-function QBittorrentBlock({ fields, setFields, onTest, testResult, saving }) {
-  const t = useT();
-  const statusColor = testResult === null ? T.textMute
-    : testResult?.connected ? T.statusDone : T.statusEnded;
-  const statusLabel = testResult === null ? '—'
-    : testResult?.connected
-      ? `✓ OK${testResult.version ? ' · v' + testResult.version : ''}`
-      : `✕ ${testResult?.reason || t('set_conn_error_fallback')}`;
-
-  return (
-    <SettingsGroup theme={T} title="qBittorrent" sub={
-      <span style={{display:'flex',alignItems:'center',gap:8}}>
-        <StatusPill theme={T} color={statusColor} label={statusLabel} size="sm"/>
-      </span>
-    }>
-      <SettingsRow theme={T} label={t('set_conn_url_label')}
-        control={<TextField theme={T} value={fields.qbittorrent_url || ''} width={280} mono
-          placeholder="http://localhost:8080"
-          onChange={v => setFields(p => ({...p, qbittorrent_url: v}))}/>}/>
-      <SettingsRow theme={T} label={t('set_conn_username_label')}
-        control={<TextField theme={T} value={fields.qbittorrent_username || ''} width={200} mono
-          placeholder="admin"
-          onChange={v => setFields(p => ({...p, qbittorrent_username: v}))}/>}/>
-      <SettingsRow theme={T} label={t('set_conn_password_label')}
-        control={<TextField theme={T} value={fields.qbittorrent_password || ''} width={200} mono
-          type="password"
-          placeholder="••••••••"
-          onChange={v => setFields(p => ({...p, qbittorrent_password: v}))}/>}/>
-      <SettingsRow theme={T} last label=" "
-        control={
-          <button onClick={onTest} disabled={saving}
-            style={{...btnSub(T), fontSize:11, padding:'5px 12px'}}>
-            {t('set_conn_qbt_test_btn')}
-          </button>
-        }/>
     </SettingsGroup>
   );
 }
@@ -2818,9 +2738,6 @@ export default function Settings() {
       {sec === 'users'       && <UsersSection/>}
       {sec === 'apikeys'     && <ApiKeysSection/>}
       {sec === 'backup'      && <BackupSection/>}
-      {sec === 'downloads'   && (
-        <div style={{color:T.textMute,fontSize:13,padding:8}}>{t('set_page_downloads_placeholder')}</div>
-      )}
       {sec === 'indexers'    && <IndexersSection/>}
       {sec === 'logs'        && <LogsSection/>}
       {sec === 'diagnostika' && <DiagnostikaSection onNavigate={setSec}/>}
