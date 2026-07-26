@@ -640,6 +640,8 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
                 _FACTORIES_BULK = {"hiyori": _hiyori, "hns": _hns,
                                    "kamui": _kamui, "gensubs": _gensubs}
                 found_src = None
+                blocked_providers: set[str] = set()
+                usable_providers = [s_ for s_ in sources if _FACTORIES_BULK.get(s_)]
                 for src in sources:
                     factory = _FACTORIES_BULK.get(src)
                     if not factory:
@@ -648,12 +650,20 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
                     if scraper is None:
                         continue
                     _msg(f"({i+1}/{total}) {ep_label} — hledám na {src}...")
-                    found = scraper.search(
-                        title=ep.series.title,
-                        season=ep.season_number,
-                        episode=ep.episode_number,
-                        language="cs",
-                    )
+                    try:
+                        found = scraper.search(
+                            title=ep.series.title,
+                            season=ep.season_number,
+                            episode=ep.episode_number,
+                            language="cs",
+                        )
+                    except RateLimitExceeded as rl:
+                        # This provider is banned/exhausted/cooling down — that's
+                        # no reason to give up on the others (a banned first
+                        # provider must not disable the whole pipeline).
+                        blocked_providers.add(src)
+                        _msg(f"({i+1}/{total}) {ep_label} — {src} nedostupný: {rl}")
+                        continue
                     results.extend(found)
                     if found:
                         found_src = src
@@ -662,6 +672,14 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
                 # Filter out cross-site "direct" links if setting is enabled
                 if skip_external_links:
                     results = [r for r in results if r.get("source") != "direct"]
+
+                if usable_providers and blocked_providers >= set(usable_providers):
+                    # Every configured provider is unavailable — nothing this run
+                    # can do for the remaining episodes either.
+                    raise RateLimitExceeded(
+                        "všechny zdroje titulků jsou nedostupné (limit/ban) — "
+                        "zkus to později nebo zkontroluj Nastavení → Indexery"
+                    )
 
                 if not results:
                     fail += 1

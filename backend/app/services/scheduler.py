@@ -112,6 +112,7 @@ def job_download_missing():
                 from .hiyori import HiyoriScraper
                 from .hns import HnsScraper
                 results = []
+                blocked_providers: set[str] = set()
                 for src in sources:
                     tried_sources.append(src)
                     scraper = (
@@ -119,15 +120,27 @@ def job_download_missing():
                         if src == "hiyori"
                         else HnsScraper(hns_user, hns_pass)
                     )
-                    found = scraper.search(
-                        title=ep.series.title if ep.series else "",
-                        season=ep.season_number,
-                        episode=ep.episode_number,
-                        language="cs",
-                    )
+                    try:
+                        found = scraper.search(
+                            title=ep.series.title if ep.series else "",
+                            season=ep.season_number,
+                            episode=ep.episode_number,
+                            language="cs",
+                        )
+                    except RateLimitExceeded as rl:
+                        # One provider being banned/exhausted must not disable
+                        # the rest of the pipeline.
+                        blocked_providers.add(src)
+                        log.warning("[scheduler] %s nedostupný: %s", src, rl)
+                        continue
                     results.extend(found)
                     if found:
                         break
+
+                if blocked_providers >= set(sources):
+                    raise RateLimitExceeded(
+                        "všechny zdroje titulků jsou nedostupné (limit/ban)"
+                    )
 
                 # Skip "direct" cross-site links (e.g. ange.3mka.cz) —
                 # they are often geo-blocked for server IPs or require login.
