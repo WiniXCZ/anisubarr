@@ -53,18 +53,25 @@ def auth(db):
         db.commit()
 
 
+def _clear_seerr_config(s):
+    s.query(Service).filter(Service.type == "seerr").delete()
+    s.query(AppSetting).filter(
+        AppSetting.key.in_(["seerr_host", "seerr_api_key"])
+    ).delete(synchronize_session=False)
+    s.commit()
+
+
 @pytest.fixture
 def db():
+    """Clears Seerr config before *and* after — modules share one SQLite file,
+    so leftover rows would otherwise change what later test files observe."""
     s = SessionLocal()
     try:
-        s.query(Service).filter(Service.type == "seerr").delete()
-        s.query(AppSetting).filter(
-            AppSetting.key.in_(["seerr_host", "seerr_api_key"])
-        ).delete(synchronize_session=False)
-        s.commit()
+        _clear_seerr_config(s)
         yield s
     finally:
         s.rollback()
+        _clear_seerr_config(s)
         s.close()
 
 
