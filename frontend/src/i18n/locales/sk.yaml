@@ -199,6 +199,8 @@ su_last_seen: "naposledy"
 su_seen_today: "dnes"
 su_seen_yesterday: "včera"
 su_seen_days: "pred {n} dňami"
+nav_users: "Používatelia"
+su_count: "{n} používateľov"
 
 # Calendar
 cal_title: "Kalendár"

@@ -16,7 +16,6 @@ import {
 import LibrariesSettings from './LibrariesSettings';
 import ServicesTable from '../components/ServicesTable';
 import ProvidersTable from '../components/ProvidersTable';
-import ServiceUsersList from '../components/ServiceUsersList';
 import { LANGUAGE_OPTIONS } from '../i18n/translations';
 import { useT } from '../i18n/I18nContext';
 
@@ -2658,12 +2657,7 @@ export default function Settings() {
       {sec === 'sonarr_adv'  && <SonarrAdvSection/>}
       {sec === 'promotion'   && <PromotionSection/>}
       {sec === 'auto_tasks'  && <AutoTasksSection/>}
-      {sec === 'users'       && (
-        <div style={{display:'flex',flexDirection:'column',gap:28}}>
-          <UsersSection/>
-          <ServiceUsersList/>
-        </div>
-      )}
+      {sec === 'users'       && <UsersSection/>}
       {sec === 'apikeys'     && <ApiKeysSection/>}
       {sec === 'backup'      && <BackupSection/>}
       {sec === 'indexers'    && <IndexersSection/>}

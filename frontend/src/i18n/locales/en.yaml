@@ -199,6 +199,8 @@ su_last_seen: "last seen"
 su_seen_today: "today"
 su_seen_yesterday: "yesterday"
 su_seen_days: "{n} days ago"
+nav_users: "Users"
+su_count: "{n} users"
 
 # Calendar
 cal_title: "Calendar"

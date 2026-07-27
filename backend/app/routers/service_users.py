@@ -7,6 +7,8 @@ watches it without opening two other web UIs.
 
 Read-only on purpose: creating or editing accounts belongs in those apps.
 
+Requires a login (like every other page), not admin — it is a top-level tab.
+
 GET /api/service-users → {"users": [...], "sources": {...}}
 """
 from __future__ import annotations
@@ -19,7 +21,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import require_admin
+from ..deps import get_current_user
 from ..models.user import User
 
 log = logging.getLogger("anisubarr.service_users")
@@ -110,7 +112,7 @@ async def _emby_users(db: Session) -> tuple[list[dict], dict]:
 @router.get("")
 async def list_service_users(
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(get_current_user),
 ) -> dict:
     """Users from Seerr and Emby. A failing service degrades to an empty list
     plus a reason, so one unreachable server doesn't hide the other's users."""
