@@ -1030,8 +1030,8 @@ function ScheduleEpModal({ theme, count, episodeIds, onClose, onScheduled }) {
 
   return createPortal(
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.65)', zIndex:9999,
-      display:'flex', alignItems:'center', justifyContent:'center' }} onClick={onClose}>
-      <div style={{ width:340, background:theme.panel, border:`1px solid ${theme.borderStrong}`,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={onClose}>
+      <div style={{ width:340, maxWidth:'100%', minWidth:0, background:theme.panel, border:`1px solid ${theme.borderStrong}`,
         borderRadius:14, padding:22, display:'flex', flexDirection:'column', gap:14 }}
         onClick={e => e.stopPropagation()}>
         <div style={{ font:'700 15px "Space Grotesk"', color:theme.text }}>{t('sd_schedule_title')}</div>
@@ -1108,7 +1108,7 @@ function ReportIssueModal({ theme, seriesId, onClose, onReported }) {
   return createPortal(
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.65)', zIndex:9999,
       display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={onClose}>
-      <div style={{ width:380, background:theme.panel, border:`1px solid ${theme.borderStrong}`,
+      <div style={{ width:380, maxWidth:'100%', minWidth:0, background:theme.panel, border:`1px solid ${theme.borderStrong}`,
         borderRadius:14, padding:22, display:'flex', flexDirection:'column', gap:14 }}
         onClick={e => e.stopPropagation()}>
         <div style={{ font:'700 15px "Space Grotesk"', color:theme.text }}>🐞 {t('sd_report_issue_short')}</div>

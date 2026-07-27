@@ -205,7 +205,7 @@ function ProviderModal({ provider, availableTypes, onClose, onSaved }) {
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 200, padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{
-        width: 440, maxWidth: '100%', background: T.panel, border: `1px solid ${T.borderStrong}`,
+        width: 440, maxWidth: '100%', minWidth: 0, background: T.panel, border: `1px solid ${T.borderStrong}`,
         borderRadius: 14, padding: 22, boxShadow: '0 24px 70px rgba(0,0,0,0.5)',
         display: 'flex', flexDirection: 'column', gap: 14,
       }}>

@@ -250,7 +250,11 @@ export function TextField({ theme, value, onChange, width = 200, mono = false, p
       onChange={e => onChange && onChange(e.target.value)}
       placeholder={placeholder}
       style={{
-        width, padding:'6px 10px', background:theme.panel2, color:theme.text,
+        // `width` is a preferred size, not a floor — maxWidth+border-box let the
+        // field shrink inside narrow containers (phone modals) instead of
+        // pushing the whole dialog off-screen.
+        width, maxWidth: '100%', boxSizing: 'border-box',
+        padding:'6px 10px', background:theme.panel2, color:theme.text,
         border:`1px solid ${theme.border}`, borderRadius:6, outline:'none',
         font:`500 12px ${mono ? 'JetBrains Mono' : '"Space Grotesk"'}`,
       }}
@@ -261,6 +265,7 @@ export function TextField({ theme, value, onChange, width = 200, mono = false, p
 export function SelectField({ theme, value, options, onChange, disabled = false }) {
   return (
     <select value={value} disabled={disabled} onChange={e => onChange && onChange(e.target.value)} style={{
+      maxWidth:'100%', boxSizing:'border-box',
       padding:'6px 10px', background:theme.panel2, color:theme.text,
       border:`1px solid ${theme.border}`, borderRadius:6, outline:'none',
       font:'500 12px "Space Grotesk"', cursor: disabled ? 'default' : 'pointer',

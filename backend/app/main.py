@@ -30,7 +30,7 @@ from .routers import (
     downloads, glossary, video_stream, episode_markers, logs,
     qbittorrent, search, dashboard,
     quick_add, discover, watchlist, audit,
-    libraries, public, newsletter_admin, backup, services, system,
+    libraries, public, newsletter_admin, backup, services, system, service_users,
 )
 
 settings = get_settings()
@@ -216,6 +216,7 @@ app.include_router(public.router)
 app.include_router(newsletter_admin.router)
 app.include_router(backup.router)
 app.include_router(system.router)
+app.include_router(service_users.router)
 app.include_router(services.router)
 
 

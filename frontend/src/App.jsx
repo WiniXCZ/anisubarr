@@ -11,6 +11,7 @@ import Library from "./pages/Library";
 import SeriesDetail from "./pages/SeriesDetail";
 import Calendar from "./pages/Calendar";
 import Files from "./pages/Files";
+import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 import AdminUsers from "./pages/AdminUsers";
 import Requests from "./pages/Requests";
@@ -77,6 +78,7 @@ export default function App() {
                     <Route path="/calendar"   element={<Calendar />} />
                     <Route path="/requests"   element={<Requests />} />
                     <Route path="/files"      element={<Files />} />
+                    <Route path="/users"      element={<Users />} />
                     <Route path="/settings"   element={<Settings />} />
                     <Route path="/subtitles"  element={<SubtitleEditorComingSoon />} />
                     <Route path="/player/:seriesId/:episodeId" element={<PlayerPage />} />

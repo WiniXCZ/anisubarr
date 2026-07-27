@@ -192,6 +192,9 @@ export const deleteService      = (id)     => api.delete(`/services/${id}`);
 export const testService        = (id)     => api.post(`/services/${id}/test`);
 export const testServiceUnsaved = (body)   => api.post("/services/test", body);
 
+// ── Users on connected services (Seerr / Emby) ──
+export const getServiceUsers    = ()    => api.get("/service-users");
+
 // ── Library stats ─────────────────────────
 export const getLibraryStats    = ()    => api.get("/library/stats");
 

@@ -26,6 +26,7 @@ const ICONS = {
   subs:    <><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="6" y1="12" x2="10" y2="12"/><line x1="12" y1="12" x2="18" y2="12"/><line x1="6" y1="16" x2="14" y2="16"/></>,
   sync:    <><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></>,
   pulse:   <><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></>,
+  users:   <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
   out:     <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></>,
   menu:    <><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></>,
   close:   <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>,
@@ -38,6 +39,7 @@ const NAV_ITEMS = [
   { to: "/calendar",  icon: ICONS.cal,      labelKey: "nav_calendar" },
   { to: "/requests",  icon: ICONS.req,      labelKey: "nav_requests" },
   { to: "/files",     icon: ICONS.files,    labelKey: "nav_files" },
+  { to: "/users",     icon: ICONS.users,    labelKey: "nav_users" },
   { to: "/settings",  icon: ICONS.sett,     labelKey: "nav_settings" },
 ];
 
