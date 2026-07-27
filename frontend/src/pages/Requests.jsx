@@ -86,10 +86,10 @@ function NewRequestModal({ onClose, onCreate }) {
   return (
     <div style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
-      display: 'grid', placeItems: 'center', zIndex: 200,
+      display: 'grid', placeItems: 'center', zIndex: 200, padding: 16,
     }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{
-        width: 460, background: T.panel, border: `1px solid ${T.borderStrong}`,
+        width: 460, maxWidth: '100%', minWidth: 0, background: T.panel, border: `1px solid ${T.borderStrong}`,
         borderRadius: 14, padding: 24, boxShadow: '0 28px 80px rgba(0,0,0,0.55)',
         display: 'flex', flexDirection: 'column', gap: 16,
       }}>

@@ -133,7 +133,8 @@ def _issue_url(issue_id: int | None, db: Session) -> str | None:
     if not issue_id:
         return None
     try:
-        host = _cfg("seerr_host", db)
+        from ..services import connections
+        host, _key = connections.resolve_seerr(db)
         if not host:
             return None
         host = host.rstrip("/")
@@ -157,9 +158,14 @@ def seerr_status(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Test connection and return server info. Returns {connected: false} if not configured."""
-    host    = _cfg("seerr_host",    db)
-    api_key = _cfg("seerr_api_key", db)
+    """Test connection and return server info. Returns {connected: false} if not configured.
+
+    Resolves through the connection registry (Připojení → Služby) exactly like
+    _get_seerr_cfg — reading the legacy flat settings here instead made the UI
+    report "not connected" for a Seerr configured in the registry, which hid the
+    Seerr tab and its requests."""
+    from ..services import connections
+    host, api_key = connections.resolve_seerr(db)
     if not host or not api_key:
         return {"connected": False, "reason": "not_configured"}
     try:
