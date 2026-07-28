@@ -126,7 +126,7 @@ def test_seerr_payload_is_normalised(auth):
 
         with patch.object(su.httpx, "AsyncClient", lambda **kw: _Client()):
             users, state = client.get("/api/service-users", headers=auth).json(), None
-        rows = [u for u in users["users"] if u["source"] == "seerr"]
+        rows = [u for u in users["users"] if "seerr" in u["sources"]]
 
         alice = next(u for u in rows if u["name"] == "Alice")
         assert alice["is_admin"] is True
@@ -138,3 +138,72 @@ def test_seerr_payload_is_normalised(auth):
         db.query(Service).filter(Service.type == "seerr").delete()
         db.commit()
         db.close()
+
+
+# ── Deduplication ────────────────────────────────────────────────────────────
+# The same person usually has an account on both services; listing them twice
+# (as seen in production: "AMP3R1X" and "Anetka" appeared once per service) is
+# noise, so entries are merged into one row carrying both source badges.
+
+def _seerr(name, **kw):
+    base = {"source": "seerr", "id": 1, "name": name, "email": None, "avatar": None,
+            "is_admin": False, "requests": 0, "last_seen": None}
+    base.update(kw)
+    return base
+
+
+def _emby(name, **kw):
+    base = {"source": "emby", "id": "e1", "name": name, "email": None, "avatar": None,
+            "is_admin": False, "disabled": False, "last_seen": None}
+    base.update(kw)
+    return base
+
+
+def test_same_person_on_both_services_becomes_one_row():
+    merged = su._merge([_seerr("Anetka"), _emby("anetka")])  # case-insensitive
+    assert len(merged) == 1
+    assert sorted(merged[0]["sources"]) == ["emby", "seerr"]
+    assert merged[0]["ids"] == {"seerr": 1, "emby": "e1"}
+
+
+def test_merge_keeps_the_richer_details():
+    merged = su._merge([
+        _seerr("Ann", email="ann@x.cz", requests=5, last_seen="2026-01-01T00:00:00Z"),
+        _emby("Ann", avatar="http://emby/a.jpg", is_admin=True,
+              last_seen="2026-06-01T00:00:00Z"),
+    ])[0]
+    assert merged["email"] == "ann@x.cz"        # only Seerr has it
+    assert merged["avatar"] == "http://emby/a.jpg"  # only Emby has it
+    assert merged["requests"] == 5
+    assert merged["is_admin"] is True            # admin anywhere counts
+    assert merged["last_seen"] == "2026-06-01T00:00:00Z"  # most recent wins
+
+
+def test_email_matches_across_differing_names():
+    merged = su._merge([
+        _seerr("bob_the_admin", email="bob@x.cz"),
+        _emby("Bob", email="BOB@X.CZ"),
+    ])
+    assert len(merged) == 1, "shodný e-mail má přednost před jménem"
+
+
+def test_two_accounts_on_the_same_service_stay_separate():
+    """Same name twice within one service really is two different people."""
+    merged = su._merge([_seerr("Alex", id=1), _seerr("Alex", id=2)])
+    assert len(merged) == 2
+
+
+def test_disabled_only_when_every_source_says_so():
+    both_off = su._merge([_emby("X", disabled=True), _emby("X", disabled=True)])
+    assert len(both_off) == 2  # same service → not merged
+
+    mixed = su._merge([_seerr("Y"), _emby("Y", disabled=True)])[0]
+    assert mixed["disabled"] is False, "aktivní v jedné službě → není zakázán"
+
+    off = su._merge([_emby("Z", disabled=True)])[0]
+    assert off["disabled"] is True
+
+
+def test_distinct_people_are_not_merged():
+    merged = su._merge([_seerr("Anna"), _emby("Baret")])
+    assert len(merged) == 2
