@@ -476,8 +476,9 @@ export default function Requests() {
           )}
         </div>
 
-        {/* Tabs */}
-        <div style={{ display: 'flex', gap: 6 }}>
+        {/* Tabs — wrap like the stats above; four pills don't fit one phone row
+            and without this the whole page scrolls sideways. */}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <FilterPill theme={T} label={t('req_tab_pending')}  active={tab === 'pending'}
             count={counts.pending}  onClick={() => setTab('pending')}/>
           <FilterPill theme={T} label={t('req_tab_approved')} active={tab === 'approved'}

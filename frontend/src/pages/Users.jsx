@@ -29,7 +29,7 @@ function formatSeen(value, t) {
 }
 
 function Avatar({ user }) {
-  const color = SOURCE_COLOR[user.source] || T.textMute;
+  const color = SOURCE_COLOR[(user.sources || [])[0]] || T.textMute;
   if (user.avatar) {
     return (
       <img src={user.avatar} alt="" loading="lazy"
@@ -75,12 +75,17 @@ function UserRow({ user }) {
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>{meta || '—'}</div>
       </div>
-      <span style={{
-        flexShrink: 0, font: '600 10px "Space Grotesk"',
-        color: SOURCE_COLOR[user.source] || T.textMute,
-        background: T.panel2, border: `1px solid ${T.border}`,
-        padding: '3px 9px', borderRadius: 99, whiteSpace: 'nowrap',
-      }}>{SOURCE_LABEL[user.source] || user.source}</span>
+      <div style={{ display: 'flex', gap: 4, flexShrink: 0, flexWrap: 'wrap',
+                    justifyContent: 'flex-end' }}>
+        {(user.sources || []).map(src => (
+          <span key={src} style={{
+            font: '600 10px "Space Grotesk"',
+            color: SOURCE_COLOR[src] || T.textMute,
+            background: T.panel2, border: `1px solid ${T.border}`,
+            padding: '3px 9px', borderRadius: 99, whiteSpace: 'nowrap',
+          }}>{SOURCE_LABEL[src] || src}</span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -136,7 +141,7 @@ export default function Users() {
           }}>{t('su_empty')}</div>
         )}
 
-        {users.map(u => <UserRow key={`${u.source}-${u.id}`} user={u}/>)}
+        {users.map(u => <UserRow key={`${u.name}-${(u.sources || []).join('+')}`} user={u}/>)}
       </div>
     </div>
   );
