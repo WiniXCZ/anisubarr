@@ -134,16 +134,27 @@ def ensure_local_folder_provider(db: Session) -> bool:
 
     row = db.query(Service).filter(Service.type == local_subs.PROVIDER_TYPE).first()
     if row is not None:
+        # The row is seeded automatically, so a still-default path is nobody's
+        # decision — a LOCAL_SUBTITLE_DIR set later (the usual way to configure
+        # a container) must win over it. A path the user chose is left alone.
+        explicit = local_subs.configured_folder(db)
+        if explicit and (row.host or "") == local_subs.default_folder():
+            log.info("[connections] ruční složka přesunuta na %s", explicit)
+            row.host = explicit
+            db.commit()
         local_subs.ensure_folder(db)
         return False
 
+    # folder_path() honours LOCAL_SUBTITLE_DIR / the setting, so a container
+    # configured before its first boot gets the right path straight away.
+    path = local_subs.folder_path(db)
     db.add(Service(
         name="Ruční složka", type=local_subs.PROVIDER_TYPE,
-        host=local_subs.default_folder(), enabled=True, sort_order=-1,
+        host=path, enabled=True, sort_order=-1,
     ))
     db.commit()
     local_subs.ensure_folder(db)
-    log.info("[connections] ruční složka pro titulky: %s", local_subs.default_folder())
+    log.info("[connections] ruční složka pro titulky: %s", path)
     return True
 
 

@@ -182,6 +182,33 @@ def test_an_explicit_position_for_the_folder_is_respected(db):
     assert subs._get_provider_order(db) == ["hiyori", "local"]
 
 
+def test_configured_path_wins_over_the_auto_seeded_default(db, tmp_path):
+    """LOCAL_SUBTITLE_DIR (or the setting) is how a container gets configured,
+    and it is usually set *after* the first boot already seeded the row — the
+    auto-seeded default path must not out-vote it."""
+    from app.services import local_subs
+
+    connections.ensure_local_folder_provider(db)
+    assert db.query(Service).filter(Service.type == "local").one().host \
+        == local_subs.default_folder()
+
+    db.add(AppSetting(key="local_subtitle_dir", value=str(tmp_path)))
+    db.commit()
+    connections.ensure_local_folder_provider(db)
+    assert db.query(Service).filter(Service.type == "local").one().host == str(tmp_path)
+
+
+def test_a_hand_picked_path_is_never_overwritten(db, tmp_path):
+    """Once the path was chosen in the UI it stays, whatever the env says."""
+    db.add(Service(name="Ruční složka", type="local", host="/subs/moje",
+                   enabled=True, sort_order=-1))
+    db.add(AppSetting(key="local_subtitle_dir", value=str(tmp_path)))
+    db.commit()
+
+    connections.ensure_local_folder_provider(db)
+    assert db.query(Service).filter(Service.type == "local").one().host == "/subs/moje"
+
+
 def test_folder_path_prefers_the_registry_over_the_default(db, tmp_path):
     from app.services import local_subs
 
