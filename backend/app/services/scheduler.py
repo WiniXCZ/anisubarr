@@ -49,22 +49,51 @@ def job_download_missing():
     from .scraper_limiter import RateLimitExceeded
     from ..utils.settings_helper import read_setting
 
+    from ..routers.subtitles import (
+        _PROVIDER_FACTORIES, _PROVIDER_LABELS, _get_provider_order,
+    )
+    from . import job_log
+
     db = SessionLocal()
     try:
-        hiyori_user = read_setting("hiyori_username", db)
-        hiyori_pass = read_setting("hiyori_password", db)
-        hns_user    = read_setting("hns_username", db)
-        hns_pass    = read_setting("hns_password", db)
+        run_id = job_log.current_run_id("download_missing")
 
-        sources = []
-        if hiyori_user and hiyori_pass:
-            sources.append("hiyori")
-        if hns_user and hns_pass:
-            sources.append("hns")
+        def _msg(text: str) -> None:
+            if run_id:
+                job_log.update_message(run_id, text)
 
-        if not sources:
-            log.warning("[scheduler] download_missing → no scraper credentials configured")
+        # Sources come from the registry (order, enabled flags, ruční složka)
+        # like everywhere else. This job used to keep its own hardcoded
+        # hiyori+hns list read straight from the legacy settings, which meant
+        # the folder was never searched and switching a banned provider off in
+        # the UI didn't stop the nightly sweep from hammering it.
+        sources = _get_provider_order(db)
+
+        # One scraper per provider for the whole run, not one per episode: a
+        # fresh instance logs in again every time, and 10 000 episodes then mean
+        # 10 000 logins — the very pattern that got Hiyori banned.
+        scrapers: dict = {}
+        for src in sources:
+            factory = _PROVIDER_FACTORIES.get(src)
+            if not factory:
+                continue
+            try:
+                scraper = factory(db)
+            except Exception as exc:
+                log.warning("[scheduler] %s nelze použít: %s", src, exc)
+                continue
+            if scraper is None:
+                log.info("[scheduler] %s přeskočen — nenakonfigurován, vypnutý, "
+                         "nebo složka neexistuje", _PROVIDER_LABELS.get(src, src))
+                continue
+            scrapers[src] = scraper
+
+        if not scrapers:
+            log.warning("[scheduler] download_missing → žádný použitelný zdroj titulků")
+            _msg("žádný použitelný zdroj titulků")
             return
+        log.info("[scheduler] download_missing → zdroje: %s",
+                 ", ".join(_PROVIDER_LABELS.get(s, s) for s in scrapers))
         # Episodes that have a file but no Czech subtitle yet
         # Respects the subtitle_treat_embedded_as_dl setting:
         # if enabled, episodes with embedded CS tracks count as already subtitled.
@@ -109,17 +138,10 @@ def job_download_missing():
             series_id = ep.series_id
             tried_sources: list[str] = []
             try:
-                from .hiyori import HiyoriScraper
-                from .hns import HnsScraper
                 results = []
                 blocked_providers: set[str] = set()
-                for src in sources:
+                for src, scraper in scrapers.items():
                     tried_sources.append(src)
-                    scraper = (
-                        HiyoriScraper(hiyori_user, hiyori_pass)
-                        if src == "hiyori"
-                        else HnsScraper(hns_user, hns_pass)
-                    )
                     try:
                         found = scraper.search(
                             title=ep.series.title if ep.series else "",
@@ -137,7 +159,7 @@ def job_download_missing():
                     if found:
                         break
 
-                if blocked_providers >= set(sources):
+                if blocked_providers >= set(scrapers):
                     raise RateLimitExceeded(
                         "všechny zdroje titulků jsou nedostupné (limit/ban)"
                     )
@@ -155,7 +177,13 @@ def job_download_missing():
                     continue
 
                 best      = results[0]
-                raw_bytes = _fetch_bytes(best["source"], best["url"], db=db)
+                _msg(f"{ep_label} {ep.series.title if ep.series else ''} — "
+                     f"stahuji: {_PROVIDER_LABELS.get(best['source'], best['source'])}")
+                # Same instance that searched: it already holds the session the
+                # download link was issued for, and it saves another login.
+                owner = scrapers.get(best["source"])
+                raw_bytes = (owner.download(best["url"]) if owner is not None
+                             else _fetch_bytes(best["source"], best["url"], db=db))
                 sub_bytes, ext = extract_subtitle_bytes(raw_bytes)
                 save_path = _save_subtitle(ep, sub_bytes, "cs", ext)
 
@@ -735,6 +763,18 @@ def _wrap(job_id: str, fn: Callable):
 # Lifecycle
 # ──────────────────────────────────────────
 
+# How late a missed run may still fire. Restarting the container an hour after
+# a job's slot used to re-trigger it — harmless for a metadata refresh, but for
+# the library-wide subtitle sweep it means thousands of requests to the
+# providers just because the container was updated.
+_DEFAULT_GRACE = 3600
+_JOB_GRACE = {"download_missing": 120}
+
+
+def _grace(job_id: str) -> int:
+    return _JOB_GRACE.get(job_id, _DEFAULT_GRACE)
+
+
 def start(db_session_factory=None):
     """Initialize APScheduler and load jobs from DB."""
     global _scheduler
@@ -764,7 +804,7 @@ def start(db_session_factory=None):
                 trigger,
                 id=row.job_id,
                 replace_existing=True,
-                misfire_grace_time=3600,
+                misfire_grace_time=_grace(row.job_id),
             )
             log.info(f"[scheduler] registered job '{row.job_id}' ({row.interval})")
     finally:
@@ -814,7 +854,7 @@ def reload_job(job_id: str):
             trigger,
             id=job_id,
             replace_existing=True,
-            misfire_grace_time=3600,
+            misfire_grace_time=_grace(job_id),
         )
         log.info(f"[scheduler] reloaded job '{job_id}'")
     finally:
