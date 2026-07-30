@@ -127,6 +127,13 @@ def folder_path(db=None) -> str:
         except Exception:
             pass
 
+    return configured_folder(db) or default_folder()
+
+
+def configured_folder(db=None) -> str:
+    """The path someone actually configured (setting or LOCAL_SUBTITLE_DIR), or
+    "" when nobody did. Kept separate from the registry row so a row that was
+    only auto-seeded can tell it apart from a deliberate choice."""
     try:
         from ..utils.settings_helper import read_setting
         configured = (read_setting("local_subtitle_dir", db) or "").strip()
@@ -137,13 +144,9 @@ def folder_path(db=None) -> str:
 
     try:
         from ..config import get_settings
-        env_value = (get_settings().local_subtitle_dir or "").strip()
-        if env_value:
-            return env_value
+        return (get_settings().local_subtitle_dir or "").strip()
     except Exception:
-        pass
-
-    return default_folder()
+        return ""
 
 
 def ensure_folder(db=None) -> str:
