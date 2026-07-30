@@ -776,6 +776,7 @@ function SubtitleDefaultsSection() {
   ];
   const PROVIDER_OPTIONS = [
     { value: 'any',     label: t('set_subdef_provider_any') },
+    { value: 'local',   label: t('prov_local_title') },
     { value: 'hiyori',  label: 'Hiyori.cz' },
     { value: 'hns',     label: 'HnS.sk' },
     { value: 'kamui',   label: 'Kamui-subs.cz' },
@@ -824,8 +825,9 @@ function SubtitleDefaultsSection() {
   );
 }
 
-const DEFAULT_PROVIDER_ORDER = ['hiyori', 'hns', 'kamui', 'gensubs'];
-const PROVIDER_LABELS = { hiyori: 'Hiyori.cz', hns: 'HnS.sk', kamui: 'Kamui-subs.cz', gensubs: 'GenSubs' };
+// "local" first: a subtitle already on the disk costs no request at all.
+const DEFAULT_PROVIDER_ORDER = ['local', 'hiyori', 'hns', 'kamui', 'gensubs'];
+const PROVIDER_LABELS = { local: 'Ruční složka', hiyori: 'Hiyori.cz', hns: 'HnS.sk', kamui: 'Kamui-subs.cz', gensubs: 'GenSubs' };
 
 function ProviderOrderEditor({ value, onChange }) {
   const order = value ? value.split(',').map(s => s.trim()).filter(Boolean) : [...DEFAULT_PROVIDER_ORDER];

@@ -121,6 +121,32 @@ def enabled_provider_order(db: Session) -> list[str] | None:
     return [r.type for r in rows if r.enabled]
 
 
+def ensure_local_folder_provider(db: Session) -> bool:
+    """Make sure the "ruční složka" provider exists and its folder is created.
+
+    Unlike the web providers this one needs no credentials, so there is nothing
+    to wait for — it is seeded on first boot and put ahead of everything else
+    (sort_order -1) because a file already on the disk beats any download.
+    Returns True when the row was created.
+    """
+    from ..models.service import Service
+    from . import local_subs
+
+    row = db.query(Service).filter(Service.type == local_subs.PROVIDER_TYPE).first()
+    if row is not None:
+        local_subs.ensure_folder(db)
+        return False
+
+    db.add(Service(
+        name="Ruční složka", type=local_subs.PROVIDER_TYPE,
+        host=local_subs.default_folder(), enabled=True, sort_order=-1,
+    ))
+    db.commit()
+    local_subs.ensure_folder(db)
+    log.info("[connections] ruční složka pro titulky: %s", local_subs.default_folder())
+    return True
+
+
 def migrate_legacy_providers(db: Session) -> int:
     """Seed subtitle providers into the registry from flat legacy settings."""
     from ..models.service import Service, SUBTITLE_PROVIDER_TYPES
@@ -130,6 +156,8 @@ def migrate_legacy_providers(db: Session) -> int:
               "kamui": "Kamui-subs.cz", "gensubs": "GenSubs"}
     created = 0
     for order, ptype in enumerate(SUBTITLE_PROVIDER_TYPES):
+        if ptype == "local":
+            continue  # a folder, not an account — see ensure_local_folder_provider
         if db.query(Service).filter(Service.type == ptype).first():
             continue
         user = (_get_setting(db, f"{ptype}_username") or "").strip()

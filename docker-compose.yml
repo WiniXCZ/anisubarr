@@ -28,6 +28,11 @@ services:
       # directly. On this host the real media lives under /mnt/user/data, so
       # mount that here too and let path_resolver fall back to it.
       - ${UNRAID_CACHE_PATH:-/mnt/user/data}:/cache:rw
+      # Optional: a nicer place to drop hand-downloaded subtitles. Without it
+      # the folder lives inside the ./data volume above
+      # (./data/manual-subs on the host), which works out of the box.
+      # Uncomment together with LOCAL_SUBTITLE_DIR=/subs in .env.
+      # - ${LOCAL_SUBTITLE_PATH:-/mnt/user/titulky}:/subs:rw
     environment:
       - DATABASE_URL=sqlite:///./data/anisubarr.db
       - SONARR_HOST=${SONARR_HOST}
@@ -44,6 +49,8 @@ services:
       - PATH_LOCAL_PREFIX=${PATH_LOCAL_PREFIX:-/media}
       # Fallback prefix for cache-only shares (see /cache mount above)
       - PATH_CACHE_PREFIX=${PATH_CACHE_PREFIX:-/cache}
+      # Ruční složka — searched before any subtitle site on the net.
+      - LOCAL_SUBTITLE_DIR=${LOCAL_SUBTITLE_DIR:-}
       # Public visitor site — internal container port (see PUBLIC_SITE_HOST_PORT
       # above for the host-side mapping). Set to 0 to disable the site entirely.
       - PUBLIC_PORT=${PUBLIC_PORT:-8090}

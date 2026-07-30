@@ -97,6 +97,11 @@ def _seed_service_registry() -> None:
             np = migrate_legacy_providers(db)
             if np:
                 print(f"[migrate] Seeded {np} subtitle provider(s) into the registry)")
+            # "Ruční složka" — created on every boot so the drop folder exists
+            # even when the volume was wiped or the path was changed by hand.
+            from .services.connections import ensure_local_folder_provider
+            if ensure_local_folder_provider(db):
+                print("[migrate] Added the manual subtitle folder provider")
         finally:
             db.close()
     except Exception as exc:

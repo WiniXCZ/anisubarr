@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getServices, createService, updateService, deleteService } from '../api/client';
+import { getServices, createService, updateService, deleteService, getLocalSubFolder } from '../api/client';
 import { useToast } from '../context/ToastContext';
 import { useT } from '../i18n/I18nContext';
 import { THEME as T, btnPrimary, btnSub, btnGhost, StatusPill, TextField, SelectField, Toggle } from '../v1design';
@@ -8,6 +8,7 @@ import { THEME as T, btnPrimary, btnSub, btnGhost, StatusPill, TextField, Select
 // Subtitle providers live in the same registry as service connections
 // (backend SUBTITLE_PROVIDER_TYPES) — same CRUD, filtered by category.
 const TYPES = [
+  { value: 'local',   label: 'Ruční složka' },
   { value: 'hiyori',  label: 'Hiyori.cz' },
   { value: 'hns',     label: 'HnS.sk' },
   { value: 'kamui',   label: 'Kamui-subs.cz' },
@@ -16,10 +17,13 @@ const TYPES = [
 const TYPE_LABEL = Object.fromEntries(TYPES.map(x => [x.value, x.label]));
 // Kamui packs subtitles in password-protected RAR archives.
 const USES_EXTRA = (type) => type === 'kamui';
+// The ruční složka is a folder on disk, so it's configured with a path and has
+// no account at all — every credential field is meaningless for it.
+const IS_FOLDER = (type) => type === 'local';
 
 const MASK = '••••';
 const EMPTY = {
-  type: 'hiyori', name: '', username: '', password: '', extra: '',
+  type: 'hiyori', name: '', username: '', password: '', extra: '', host: '',
   enabled: true, sort_order: 0,
 };
 
@@ -131,8 +135,9 @@ export default function ProvidersTable() {
                   <td style={{ padding: '9px 12px', font: '600 13px "Space Grotesk"', color: T.text, whiteSpace: 'nowrap' }}>
                     {TYPE_LABEL[p.type] || p.type}
                   </td>
-                  <td style={{ padding: '9px 12px', font: '400 12px "JetBrains Mono", monospace', color: T.textDim }}>
-                    {p.username || '—'}
+                  <td style={{ padding: '9px 12px', font: '400 12px "JetBrains Mono", monospace',
+                               color: T.textDim, wordBreak: 'break-all' }}>
+                    {IS_FOLDER(p.type) ? (p.host || '—') : (p.username || '—')}
                   </td>
                   <td style={{ padding: '9px 12px' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
@@ -161,6 +166,8 @@ export default function ProvidersTable() {
         </div>
       </div>
 
+      <LocalFolderPanel/>
+
       {editing && (
         <ProviderModal
           provider={editing}
@@ -185,14 +192,18 @@ function ProviderModal({ provider, availableTypes, onClose, onSaved }) {
       const payload = {
         name: (form.name || '').trim() || TYPE_LABEL[form.type] || form.type,
         type: form.type,
-        username: (form.username || '').trim() || null,
         enabled: form.enabled !== false,
         sort_order: Number(form.sort_order) || 0,
       };
-      // Never send back the mask — that would overwrite the stored secret.
-      if (form.password && !String(form.password).startsWith(MASK)) payload.password = form.password;
-      if (USES_EXTRA(form.type) && form.extra && !String(form.extra).startsWith(MASK)) {
-        payload.extra = form.extra;
+      if (IS_FOLDER(form.type)) {
+        payload.host = (form.host || '').trim() || null;
+      } else {
+        payload.username = (form.username || '').trim() || null;
+        // Never send back the mask — that would overwrite the stored secret.
+        if (form.password && !String(form.password).startsWith(MASK)) payload.password = form.password;
+        if (USES_EXTRA(form.type) && form.extra && !String(form.extra).startsWith(MASK)) {
+          payload.extra = form.extra;
+        }
       }
       return isNew ? createService(payload) : updateService(provider.id, payload);
     },
@@ -200,7 +211,8 @@ function ProviderModal({ provider, availableTypes, onClose, onSaved }) {
     onError: (e) => toast.error(e?.response?.data?.detail || t('prov_save_failed')),
   });
 
-  const canSave = !!form.type && !!(form.username || '').trim();
+  // An empty path is fine for the folder — the backend then uses its default.
+  const canSave = IS_FOLDER(form.type) ? true : !!(form.username || '').trim();
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 200, padding: 16 }}>
@@ -217,14 +229,23 @@ function ProviderModal({ provider, availableTypes, onClose, onSaved }) {
           <SelectField theme={T} value={form.type} options={availableTypes}
             onChange={v => set('type', v)} />
         </Field>
-        <Field label={t('prov_field_user')}>
-          <TextField theme={T} value={form.username || ''} width={260} mono
-            placeholder="uzivatel" onChange={v => set('username', v)} />
-        </Field>
-        <Field label={t('prov_field_pass')}>
-          <TextField theme={T} value={form.password || ''} width={260} mono type="password"
-            placeholder="••••••••" onChange={v => set('password', v)} />
-        </Field>
+        {IS_FOLDER(form.type) ? (
+          <Field label={t('prov_field_folder')} hint={t('prov_field_folder_hint')}>
+            <TextField theme={T} value={form.host || ''} width={320} mono
+              placeholder="/app/backend/data/manual-subs" onChange={v => set('host', v)} />
+          </Field>
+        ) : (
+          <>
+            <Field label={t('prov_field_user')}>
+              <TextField theme={T} value={form.username || ''} width={260} mono
+                placeholder="uzivatel" onChange={v => set('username', v)} />
+            </Field>
+            <Field label={t('prov_field_pass')}>
+              <TextField theme={T} value={form.password || ''} width={260} mono type="password"
+                placeholder="••••••••" onChange={v => set('password', v)} />
+            </Field>
+          </>
+        )}
         {USES_EXTRA(form.type) && (
           <Field label={t('prov_field_rar')}>
             <TextField theme={T} value={form.extra || ''} width={260} mono
@@ -246,11 +267,87 @@ function ProviderModal({ provider, availableTypes, onClose, onSaved }) {
   );
 }
 
-function Field({ label, children }) {
+function Field({ label, hint, children }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ font: '500 12px "Space Grotesk"', color: T.textDim }}>{label}</div>
       {children}
+      {hint && (
+        <div style={{ font: '400 11px "Space Grotesk"', color: T.textMute }}>{hint}</div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * What's actually in the drop folder — the answer to "I put a file there and
+ * nothing happened". The report names the episode each file was matched to, or
+ * why it couldn't be, which is otherwise invisible.
+ */
+function LocalFolderPanel() {
+  const t = useT();
+  const [report, setReport] = useState(false);
+
+  const { data, isLoading, refetch, isFetching } = useQuery({
+    queryKey: ['local-sub-folder', report],
+    queryFn: () => getLocalSubFolder(report).then(r => r.data ?? r),
+    staleTime: 15_000,
+  });
+
+  if (isLoading || !data) return null;
+
+  const rows = data.report || [];
+  const unmatched = rows.filter(r => !r.episode);
+
+  return (
+    <div style={{
+      border: `1px solid ${T.border}`, borderRadius: 10, padding: '12px 14px',
+      background: T.panel, display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ font: '600 13px "Space Grotesk"', color: T.text }}>{t('prov_local_title')}</span>
+        <StatusPill theme={T}
+          color={data.enabled && data.exists ? T.statusDone : T.textMute}
+          label={data.enabled ? (data.exists ? t('prov_local_ready') : t('prov_local_missing'))
+                              : t('prov_status_disabled')} size="sm"/>
+        <span style={{ flex: 1 }}/>
+        <button onClick={() => { setReport(true); refetch(); }}
+          style={{ ...btnGhost(T), fontSize: 11, padding: '4px 10px' }}>
+          {isFetching ? t('prov_local_checking') : t('prov_local_check')}
+        </button>
+      </div>
+
+      <div style={{ font: '400 11px "JetBrains Mono", monospace', color: T.textDim,
+                    wordBreak: 'break-all' }}>{data.path}</div>
+      <div style={{ font: '400 12px "Space Grotesk"', color: T.textMute }}>
+        {t('prov_local_files').replace('{n}', data.files)}
+        {data.writable === false && ` · ${t('prov_local_readonly')}`}
+      </div>
+      <div style={{ font: '400 11px "Space Grotesk"', color: T.textMute }}>
+        {t('prov_local_hint').replace('{ext}', (data.extensions || []).join(', '))}
+      </div>
+
+      {report && rows.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 4 }}>
+          <div style={{ font: '600 11px "Space Grotesk"', color: T.textDim }}>
+            {t('prov_local_matched').replace('{ok}', rows.length - unmatched.length)
+              .replace('{bad}', unmatched.length)}
+          </div>
+          {/* Only the problem cases are worth listing — a matched file needs no
+              explanation, an unmatched one needs the reason. */}
+          {unmatched.slice(0, 12).map(r => (
+            <div key={r.file} style={{ font: '400 11px "JetBrains Mono", monospace',
+                                       color: T.textMute, wordBreak: 'break-all' }}>
+              ⚠ {r.file} — {r.reason}{r.series ? ` (${r.series})` : ''}
+            </div>
+          ))}
+          {unmatched.length > 12 && (
+            <div style={{ font: '400 11px "Space Grotesk"', color: T.textMute }}>
+              … +{unmatched.length - 12}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

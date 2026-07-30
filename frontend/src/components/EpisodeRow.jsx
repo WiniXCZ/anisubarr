@@ -55,6 +55,7 @@ const LANG_CODES = {
 // chrome and go through t(). Call once per component via getSourceLabelMeta(t).
 function getSourceLabelMeta(t) {
   return {
+    local:   t("epr_source_local"),
     hiyori:  "Hiyori",
     hns:     "HnS",
     kamui:   "Kamui",
@@ -67,6 +68,7 @@ function getSourceLabelMeta(t) {
 }
 
 const SOURCE_STYLE = {
+  local:   "bg-amber-900/40  text-amber-300  border-amber-800/40",
   hiyori:  "bg-purple-900/40 text-purple-300 border-purple-800/40",
   hns:     "bg-blue-900/40   text-blue-300   border-blue-800/40",
   kamui:   "bg-pink-900/40   text-pink-300   border-pink-800/40",

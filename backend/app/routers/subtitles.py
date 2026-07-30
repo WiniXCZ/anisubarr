@@ -29,9 +29,10 @@ from ..services.hiyori import HiyoriScraper
 from ..services.hns import HnsScraper
 from ..services.kamui import KamuiScraper
 from ..services.gensubs import GenSubsScraper
+from ..services.local_subs import LocalFolderScraper
 from ..services.subtitle_utils import extract_subtitle_bytes
 from ..services.scraper_limiter import RateLimitExceeded
-from ..services import path_resolver
+from ..services import local_subs, path_resolver
 
 router  = APIRouter(prefix="/api/subtitles", tags=["subtitles"])
 settings = get_settings()
@@ -157,7 +158,36 @@ def _gensubs(db=None) -> GenSubsScraper | None:
     return GenSubsScraper(u, p)
 
 
-_DEFAULT_PROVIDER_ORDER = ["hiyori", "hns", "kamui", "gensubs"]
+def _local(db=None) -> LocalFolderScraper | None:
+    """Ruční složka — no credentials, just a folder that has to exist."""
+    if not _provider_enabled("local", db):
+        return None
+    root = local_subs.folder_path(db)
+    if not os.path.isdir(root):
+        return None
+    return LocalFolderScraper(root, db=db)
+
+
+_DEFAULT_PROVIDER_ORDER = ["local", "hiyori", "hns", "kamui", "gensubs"]
+
+# One map for every call path (search / download-best / bulk) — a new provider
+# is otherwise easy to wire into three places and forget in the fourth. The
+# entries call through instead of holding the function object so that replacing
+# a factory (tests, future overrides) still takes effect.
+_PROVIDER_FACTORIES = {
+    "local":   lambda db=None: _local(db),
+    "hiyori":  lambda db=None: _hiyori(db),
+    "hns":     lambda db=None: _hns(db),
+    "kamui":   lambda db=None: _kamui(db),
+    "gensubs": lambda db=None: _gensubs(db),
+}
+_PROVIDER_LABELS = {
+    "local":   "Ruční složka",
+    "hiyori":  "Hiyori",
+    "hns":     "HnS",
+    "kamui":   "Kamui",
+    "gensubs": "GenSubs",
+}
 
 
 def _get_provider_order(db=None) -> list[str]:
@@ -171,13 +201,18 @@ def _get_provider_order(db=None) -> list[str]:
     If ``subtitle_preferred_provider`` is set to a specific provider (i.e.
     not "any"/empty), that provider is moved to the front of the order —
     it acts as an override for auto-download.
+
+    The ruční složka ("local") is prepended whenever it isn't explicitly placed
+    in the configured order: a subtitle already on the disk costs no request, so
+    checking it first is always right, and an install that predates the feature
+    shouldn't have to reconfigure anything to get it.
     """
     if db is not None:
         try:
             from ..services import connections
             registry_order = connections.enabled_provider_order(db)
             if registry_order is not None:
-                return registry_order
+                return _with_local_first(registry_order, db)
         except Exception:
             pass
 
@@ -195,7 +230,14 @@ def _get_provider_order(db=None) -> list[str]:
     if preferred and preferred != "any" and preferred in sources:
         sources = [preferred] + [s for s in sources if s != preferred]
 
-    return sources
+    return _with_local_first(sources, db)
+
+
+def _with_local_first(sources: list[str], db=None) -> list[str]:
+    """Put the ruční složka in front unless it's already positioned or switched off."""
+    if "local" in sources or not _provider_enabled("local", db):
+        return sources
+    return ["local"] + sources
 
 
 # ──────────────────────────────────────────
@@ -204,12 +246,12 @@ def _get_provider_order(db=None) -> list[str]:
 
 class SearchRequest(BaseModel):
     episode_id: int                  # our DB episode id
-    sources: list[str] = ["hiyori", "hns", "kamui", "gensubs"]
+    sources: list[str] = list(_DEFAULT_PROVIDER_ORDER)
     language: str = "cs"
 
 class DownloadRequest(BaseModel):
     episode_id: int
-    source: str                      # "hiyori" / "hns" / "kamui" / "gensubs"
+    source: str                      # "local" / "hiyori" / "hns" / "kamui" / "gensubs"
     url: str
     title: str = ""
     language: str = "cs"
@@ -217,9 +259,32 @@ class DownloadRequest(BaseModel):
 
 class DownloadBestRequest(BaseModel):
     episode_id: int
-    sources: list[str] = ["hiyori", "hns", "kamui", "gensubs"]
+    sources: list[str] = list(_DEFAULT_PROVIDER_ORDER)
     language: str = "cs"
     auto_sync: Optional[bool] = None  # None = read from DB setting
+
+
+# ──────────────────────────────────────────
+# Ruční složka
+# ──────────────────────────────────────────
+
+@router.get("/local-folder")
+def local_folder_status(
+    report: bool = False,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Where the drop folder is, what's in it, and (with report=1) what each
+    file would be used for.
+
+    The report is the answer to "I put a file there and nothing happened": it
+    names the episode a file matched, or the reason it couldn't be matched.
+    """
+    local_subs.ensure_folder(db)
+    status = local_subs.folder_status(db, report=report)
+    status["enabled"] = _provider_enabled("local", db)
+    status["extensions"] = list(local_subs.ALL_EXTS)
+    return status
 
 
 # ──────────────────────────────────────────
@@ -244,21 +309,19 @@ def search_subtitles(
     def _log(msg: str):
         logs.append(msg)
 
-    _SCRAPERS = {
-        "hiyori": (_hiyori,  "Hiyori"),
-        "hns":    (_hns,     "HnS"),
-        "kamui":  (_kamui,   "Kamui"),
-        "gensubs":(_gensubs, "GenSubs"),
-    }
-
-    for src in req.sources:
-        factory, label = _SCRAPERS.get(src, (None, src))
+    # The ruční složka is searched even when the caller didn't ask for it —
+    # a file already on the disk is free, so there is no reason to skip it.
+    for src in _with_local_first(list(req.sources), db):
+        factory = _PROVIDER_FACTORIES.get(src)
+        label = _PROVIDER_LABELS.get(src, src)
         if not factory:
             _log(f"[{src}] neznámý zdroj")
             continue
         scraper = factory(db)
         if scraper is None:
-            _log(f"[{label}] přihlašovací údaje nejsou nakonfigurovány")
+            _log(f"[{label}] "
+                 + ("složka neexistuje nebo je vypnutá" if src == "local"
+                    else "přihlašovací údaje nejsou nakonfigurovány"))
             continue
         try:
             found = scraper.search(
@@ -417,11 +480,10 @@ def download_best(
     label = f"Auto-stažení S{ep.season_number:02d}E{ep.episode_number:02d} ({series_title})"
     run = job_log.start_run("subtitle_download_best", label)
 
-    _FACTORIES = {"hiyori": _hiyori, "hns": _hns, "kamui": _kamui, "gensubs": _gensubs}
     try:
         results: list[dict] = []
-        for source in req.sources:
-            factory = _FACTORIES.get(source)
+        for source in _with_local_first(list(req.sources), db):
+            factory = _PROVIDER_FACTORIES.get(source)
             if not factory:
                 continue
             scraper = factory(db)
@@ -524,10 +586,9 @@ def _download_best_for_episode(ep, db) -> str | None:
 
     sources = _get_provider_order(db)
 
-    _FACTORIES = {"hiyori": _hiyori, "hns": _hns, "kamui": _kamui, "gensubs": _gensubs}
     results: list[dict] = []
     for source in sources:
-        factory = _FACTORIES.get(source)
+        factory = _PROVIDER_FACTORIES.get(source)
         if not factory:
             continue
         scraper = factory(db)
@@ -632,7 +693,7 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
     import time
     from ..database import SessionLocal
     from ..services import job_log
-    from .subtitles import _hiyori, _hns, _kamui, _gensubs, _read_setting, _fetch_bytes, _save_subtitle, _get_provider_order
+    from .subtitles import _PROVIDER_FACTORIES, _read_setting, _fetch_bytes, _save_subtitle, _get_provider_order
     from ..services.subtitle_utils import extract_subtitle_bytes
     from ..config import get_settings
     from ..models.app_settings import AppSetting
@@ -683,13 +744,11 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
 
             try:
                 results = []
-                _FACTORIES_BULK = {"hiyori": _hiyori, "hns": _hns,
-                                   "kamui": _kamui, "gensubs": _gensubs}
                 found_src = None
                 blocked_providers: set[str] = set()
-                usable_providers = [s_ for s_ in sources if _FACTORIES_BULK.get(s_)]
+                usable_providers = [s_ for s_ in sources if _PROVIDER_FACTORIES.get(s_)]
                 for src in sources:
-                    factory = _FACTORIES_BULK.get(src)
+                    factory = _PROVIDER_FACTORIES.get(src)
                     if not factory:
                         continue
                     scraper = factory(db)
@@ -1394,6 +1453,14 @@ def _get_episode(db: Session, episode_id: int) -> Episode:
 
 
 def _fetch_bytes(source: str, url: str, db=None) -> bytes:
+    if source == "local":
+        scraper = _local(db)
+        if not scraper:
+            raise HTTPException(400, "Ruční složka není dostupná")
+        try:
+            return scraper.download(url)
+        except (ValueError, FileNotFoundError) as exc:
+            raise HTTPException(400, str(exc))
     if source == "hiyori":
         scraper = _hiyori(db)
         if not scraper:

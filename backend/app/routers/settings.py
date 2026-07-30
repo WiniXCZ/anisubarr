@@ -100,7 +100,9 @@ EDITABLE_KEYS: set[str] = {
     "subtitle_preferred_format",       # str  — srt / ass / vtt
     "subtitle_post_download_action",   # str  — none / auto_sync / rename
     "subtitle_auto_download_on_grab",  # bool — auto-download after Sonarr Download webhook
-    "subtitle_preferred_provider",     # str  — hiyori / hns / kamui / gensubs / any
+    "subtitle_preferred_provider",     # str  — local / hiyori / hns / kamui / gensubs / any
+    # ── Ruční složka ─────────────────────────────────────────────────────
+    "local_subtitle_dir",              # str  — folder searched before any provider on the net
     # ── Scraper behaviour ────────────────────────────────────────────────
     "scraper_timeout",                 # int  — HTTP timeout in seconds (default 30)
     "scraper_max_results",             # int  — max results per provider (0 = unlimited)
