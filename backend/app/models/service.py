@@ -22,11 +22,15 @@ SERVICE_TYPES = (
     "sonarr", "radarr", "prowlarr", "jackett", "qbittorrent", "emby", "seerr",
     # Subtitle providers (username + password; no host — the site is fixed)
     "hiyori", "hns", "kamui", "gensubs",
+    # Ruční složka — a folder on disk, so this one uses `host` for the path and
+    # needs no credentials at all.
+    "local",
 )
 
 # Types that are subtitle sources rather than service integrations. They share
 # this table so the registry, CRUD and UI stay one mechanism instead of two.
-SUBTITLE_PROVIDER_TYPES = ("hiyori", "hns", "kamui", "gensubs")
+# "local" comes first: a file already on the disk is always the cheapest source.
+SUBTITLE_PROVIDER_TYPES = ("local", "hiyori", "hns", "kamui", "gensubs")
 
 
 class Service(Base):

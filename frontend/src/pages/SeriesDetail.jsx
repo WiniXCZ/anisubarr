@@ -741,6 +741,7 @@ function LogView({ seriesId, series, isMobile }) {
 
 // Source badge colors
 const SOURCE_META = {
+  local:   { label:'Ruční',   color:'#eab308' },
   hiyori:  { label:'Hiyori',  color:'#22c55e' },
   hns:     { label:'HnS',     color:'#3b82f6' },
   kamui:   { label:'Kamui',   color:'#a855f7' },
@@ -787,7 +788,7 @@ function SubSearchModal({ theme, episodeId, epLabel, onClose }) {
     try {
       const r = await searchSubtitles({
         episode_id: episodeId,
-        sources: ['hiyori', 'hns', 'kamui', 'gensubs'],
+        sources: ['local', 'hiyori', 'hns', 'kamui', 'gensubs'],
         language: 'cs',
       });
       setResults(r.data?.results ?? []);

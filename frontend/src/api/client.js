@@ -117,6 +117,9 @@ export const deleteSubsBulk     = (ids)  => api.delete("/subtitles/bulk", { data
 export const deleteSubsByEpisodes = (episodeIds, language = null) =>
   api.post("/subtitles/delete-by-episodes", { episode_ids: episodeIds, ...(language ? { language } : {}) });
 export const getEpisodeSubFiles = (epId) => api.get(`/subtitles/files/episode/${epId}`);
+// Ruční složka — where hand-downloaded subtitles are picked up from.
+export const getLocalSubFolder   = (report = false) =>
+  api.get(`/subtitles/local-folder${report ? "?report=true" : ""}`);
 export const deleteDiskFile     = (path) => api.post("/subtitles/delete-file", { file_path: path });
 export const uploadSubtitle        = (formData) => api.post("/subtitles/upload", formData, {
   headers: { "Content-Type": "multipart/form-data" },

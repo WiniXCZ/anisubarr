@@ -135,6 +135,10 @@ class Settings(BaseSettings):
     gensubs_username: str = ""
     gensubs_password: str = ""
 
+    # Ruční složka — subtitles downloaded by hand are searched before the net.
+    # Empty means "<data dir>/manual-subs", which the data volume already keeps.
+    local_subtitle_dir: str = ""
+
     # TVDB (used to enrich Discover results with TVDB IDs for Sonarr add)
     tvdb_api_key: str = ""
     tvdb_pin: str = ""
@@ -176,3 +180,8 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+
+def data_dir() -> Path:
+    """Directory holding persistent state (the SQLite file's directory)."""
+    return _data_dir(get_settings().database_url)

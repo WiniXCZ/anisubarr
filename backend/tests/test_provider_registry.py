@@ -119,6 +119,78 @@ def test_legacy_seed_creates_rows_once(db):
     assert db.query(Service).filter(Service.type == "hiyori").count() == 0
 
 
+# ── Ruční složka ─────────────────────────────────────────────────────────────
+# A file the user already downloaded costs no request and can't get anyone
+# banned, so the folder is searched before anything on the net.
+
+def test_local_folder_is_seeded_first_and_only_once(db, tmp_path):
+    assert connections.ensure_local_folder_provider(db) is True
+    assert connections.ensure_local_folder_provider(db) is False  # idempotent
+
+    row = db.query(Service).filter(Service.type == "local").one()
+    assert row.enabled is True
+    assert row.sort_order == -1, "ruční složka musí být před ostatními zdroji"
+    assert os.path.isdir(row.host), "složka se vytvoří, ne jen zapíše do DB"
+
+
+def test_local_folder_comes_first_in_the_order(db):
+    db.add_all([
+        Service(name="Hiyori", type="hiyori", username="u", password="p",
+                enabled=True, sort_order=0),
+        Service(name="Ruční složka", type="local", host="/tmp/anisubarr-drop",
+                enabled=True, sort_order=-1),
+    ])
+    db.commit()
+    assert connections.enabled_provider_order(db) == ["local", "hiyori"]
+
+
+def test_installs_without_a_local_row_still_search_the_folder_first(db):
+    """Upgrades shouldn't need reconfiguring to benefit from the folder."""
+    from app.routers import subtitles as subs
+
+    db.add(Service(name="Hiyori", type="hiyori", username="u", password="p",
+                   enabled=True, sort_order=0))
+    db.commit()
+    assert subs._get_provider_order(db)[0] == "local"
+
+
+def test_a_switched_off_local_folder_is_not_searched(db):
+    from app.routers import subtitles as subs
+
+    db.add_all([
+        Service(name="Ruční složka", type="local", host="/tmp/anisubarr-drop",
+                enabled=False, sort_order=-1),
+        Service(name="Hiyori", type="hiyori", username="u", password="p",
+                enabled=True, sort_order=0),
+    ])
+    db.commit()
+    assert "local" not in subs._get_provider_order(db)
+    assert subs._local(db) is None
+
+
+def test_an_explicit_position_for_the_folder_is_respected(db):
+    """Moved down in Připojení → Poskytovatelé means: try the net first."""
+    from app.routers import subtitles as subs
+
+    db.add_all([
+        Service(name="Hiyori", type="hiyori", username="u", password="p",
+                enabled=True, sort_order=0),
+        Service(name="Ruční složka", type="local", host="/tmp/anisubarr-drop",
+                enabled=True, sort_order=5),
+    ])
+    db.commit()
+    assert subs._get_provider_order(db) == ["hiyori", "local"]
+
+
+def test_folder_path_prefers_the_registry_over_the_default(db, tmp_path):
+    from app.services import local_subs
+
+    db.add(Service(name="Ruční složka", type="local", host=str(tmp_path),
+                   enabled=True))
+    db.commit()
+    assert local_subs.folder_path(db) == str(tmp_path)
+
+
 def test_nightly_download_defaults_off_and_migrates_once(db):
     """The library-wide nightly sweep must be off by default, and an install
     that already had it on gets it switched off exactly once."""
