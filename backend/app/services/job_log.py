@@ -32,6 +32,15 @@ _lock = threading.Lock()
 _live_messages: dict[str, str] = {}
 # Live progress 0–100 for running jobs (in-memory only)
 _live_progress: dict[str, int] = {}
+# Trail of what a job actually did, newest last: which provider it asked, which
+# file it took, where it wrote it. The headline message only ever shows the
+# current step, so without this the detail is gone the moment it changes.
+_MAX_STEPS = 12
+_live_steps: dict[str, deque] = {}
+# Steps of runs that already finished — kept for a while so a failed job can
+# still be read afterwards, which is exactly when the detail matters most.
+_FINISHED_KEPT = 50
+_final_steps: dict[str, list] = {}
 
 
 # ── JobRun handle (returned to callers so they can call finish_run) ───────────
@@ -179,10 +188,40 @@ def update_progress(run_id: str, current: int, total: int, message: str = "") ->
 
 
 def update_message(run_id: str, message: str) -> None:
-    """Update live progress message for a running job (in-memory only, no DB write)."""
+    """Update live progress message for a running job (in-memory only, no DB write).
+
+    The message is also kept as a step, so the panel can show what the job did
+    just before, not only what it is doing this second.
+    """
     with _lock:
         if run_id in _running:
             _live_messages[run_id] = message
+            _append_step(run_id, message)
+
+
+def add_step(run_id: str, text: str) -> None:
+    """Record a detail line without touching the headline — used for the things
+    a user asks about after the fact: which source answered, where a file went."""
+    with _lock:
+        if run_id in _running:
+            _append_step(run_id, text)
+
+
+def _append_step(run_id: str, text: str) -> None:
+    """Caller must hold _lock."""
+    text = (text or "").strip()
+    if not text:
+        return
+    steps = _live_steps.setdefault(run_id, deque(maxlen=_MAX_STEPS))
+    if steps and steps[-1]["text"] == text:
+        return
+    steps.append({"ts": datetime.now(timezone.utc).isoformat(), "text": text})
+
+
+def get_steps(run_id: str) -> list[dict]:
+    with _lock:
+        live = _live_steps.get(run_id)
+        return list(live) if live else list(_final_steps.get(run_id, []))
 
 
 def _unmark_running(run_id: str, job_id: str | None = None) -> None:
@@ -190,6 +229,11 @@ def _unmark_running(run_id: str, job_id: str | None = None) -> None:
     _running.discard(run_id)
     _live_messages.pop(run_id, None)
     _live_progress.pop(run_id, None)
+    steps = _live_steps.pop(run_id, None)
+    if steps:
+        _final_steps[run_id] = list(steps)
+        while len(_final_steps) > _FINISHED_KEPT:
+            _final_steps.pop(next(iter(_final_steps)))
     if job_id is not None:
         if _running_by_job_id.get(job_id) == run_id:
             _running_by_job_id.pop(job_id, None)
@@ -252,6 +296,7 @@ def get_runs(limit: int = 100) -> list[dict]:
                     "finished_at": _iso_utc(r.finished_at),
                     "message":     _live_messages.get(r.run_id, r.message or ""),
                     "progress":    _live_progress.get(r.run_id),  # None when not running
+                    "steps":       get_steps(r.run_id),
                 }
                 for r in rows
             ]

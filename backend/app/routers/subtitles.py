@@ -308,6 +308,9 @@ def search_subtitles(
 
     def _log(msg: str):
         logs.append(msg)
+        # Same line in the jobs panel — otherwise "co to zrovna dělá" is only
+        # visible to whoever happens to be looking at the search dialog.
+        job_log.add_step(run.run_id, msg.strip())
 
     # The ruční složka is searched even when the caller didn't ask for it —
     # a file already on the disk is free, so there is no reason to skip it.
@@ -385,9 +388,12 @@ def download_subtitle(
     label = f"Stažení titulku S{ep.season_number:02d}E{ep.episode_number:02d} ({ep.series.title})"
     run = job_log.start_run("subtitle_download", label)
     try:
+        job_log.add_step(run.run_id, f"zdroj {_PROVIDER_LABELS.get(req.source, req.source)}: "
+                                     f"{req.title or req.url}")
         raw_bytes = _fetch_bytes(req.source, req.url, db)
         sub_bytes, ext = extract_subtitle_bytes(raw_bytes)
         save_path = _save_subtitle(ep, sub_bytes, req.language, ext)
+        job_log.add_step(run.run_id, f"ukládám → {save_path}")
 
         # Apply post-processing (UTF-8 encoding, tag removal, etc.)
         try:
@@ -507,9 +513,12 @@ def download_best(
             raise HTTPException(404, "Žádné titulky nenalezeny")
 
         best = results[0]
+        job_log.add_step(run.run_id, f"vybráno z {_PROVIDER_LABELS.get(best['source'], best['source'])}: "
+                                     f"{best.get('title') or best['url']}")
         raw_bytes = _fetch_bytes(best["source"], best["url"], db)
         sub_bytes, ext = extract_subtitle_bytes(raw_bytes)
         save_path = _save_subtitle(ep, sub_bytes, req.language, ext)
+        job_log.add_step(run.run_id, f"ukládám → {save_path}")
 
         # Apply post-processing
         try:
@@ -754,7 +763,7 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
                     scraper = factory(db)
                     if scraper is None:
                         continue
-                    _msg(f"({i+1}/{total}) {ep_label} — hledám na {src}...")
+                    _msg(f"({i+1}/{total}) {ep_label} — hledám: {_PROVIDER_LABELS.get(src, src)}")
                     try:
                         found = scraper.search(
                             title=ep.series.title,
@@ -767,7 +776,7 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
                         # no reason to give up on the others (a banned first
                         # provider must not disable the whole pipeline).
                         blocked_providers.add(src)
-                        _msg(f"({i+1}/{total}) {ep_label} — {src} nedostupný: {rl}")
+                        _msg(f"({i+1}/{total}) {ep_label} — {_PROVIDER_LABELS.get(src, src)} nedostupný: {rl}")
                         continue
                     results.extend(found)
                     if found:
@@ -794,11 +803,13 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
                     continue
 
                 best = results[0]
-                _msg(f"({i+1}/{total}) {ep_label} — stahuji z {best['source']}...")
+                _msg(f"({i+1}/{total}) {ep_label} — stahuji: "
+                     f"{_PROVIDER_LABELS.get(best['source'], best['source'])} — {best.get('title') or best['url']}")
                 raw_bytes = _fetch_bytes(best["source"], best["url"], db)
                 sub_bytes, ext = extract_subtitle_bytes(raw_bytes)
                 _msg(f"({i+1}/{total}) {ep_label} — ukládám {ext}...")
                 save_path = _save_subtitle(ep, sub_bytes, "cs", ext)
+                job_log.add_step(run.run_id, f"→ {save_path}")
 
                 # Post-processing (best-effort)
                 try:
@@ -833,7 +844,7 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
                     )
                 else:
                     _prog(i + 1, f"✓ {ep_label} ({best['source']})")
-                    _msg(f"✓ ({i+1}/{total}) {ep_label} — {ext} z {best['source']}")
+                    _msg(f"✓ ({i+1}/{total}) {ep_label} — {ext} ({_PROVIDER_LABELS.get(best['source'], best['source'])})")
 
                 # Auto-sync after bulk download (check setting)
                 if _read_setting("subtitle_post_download_action", db) == "auto_sync" or _read_setting("auto_alass_on_download", db) == "true":

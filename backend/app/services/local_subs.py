@@ -56,6 +56,12 @@ _NOISE_WORDS = {
     "aac", "ac3", "eac3", "ddp", "flac", "opus", "10bit", "8bit", "dual",
     "titulky", "titles", "subs", "sub", "subtitles", "cz", "cs", "cze", "ces",
     "sk", "slo", "slk", "en", "eng", "final", "fixed", "complete",
+    # File extensions — the name is normalised whole, so without these every
+    # haystack would carry a "srt" nobody meant as part of the title.
+    "srt", "ass", "ssa", "vtt", "zip", "rar",
+    # Season wording: "Frieren 1. serie - 05" is still Frieren.
+    "season", "serie", "série", "series", "rada", "řada", "sezona", "sezóna",
+    "epizoda", "episode", "dil", "díl",
 }
 
 _RELEASE_NOISE_RE = re.compile(
@@ -70,16 +76,24 @@ _SE_PATTERNS = (
     re.compile(r"(?<!\d)(\d{1,2})x(\d{1,3})(?!\d)"),
 )
 # Episode only — the season then comes from the folder, or is assumed to be 1.
+# Ordered from most explicit to loosest; the last one is a plain number, which
+# is only reached when nothing better said anything.
 _EP_PATTERNS = (
     re.compile(r"(?:^|[\s._\-\[(#])(?:e|ep|episode|epizoda|dil|díl)[\s._-]*(\d{1,3})(?:v\d)?(?!\d)",
                re.IGNORECASE),
-    re.compile(r"[\s._]-[\s._]*(\d{1,3})(?:v\d)?(?!\d)"),
+    # "Show - 05" and "Sousou-no-Frieren-05" alike: the dash needs no space
+    # around it, because plenty of files are written without one.
+    re.compile(r"-[\s._]*(\d{1,3})(?:v\d)?(?!\d)"),
     re.compile(r"[\[(](\d{1,3})(?:v\d)?[\])]"),
     re.compile(r"^(\d{1,3})$"),
+    # Bare number in the middle: "Frieren 05 CZ". Loose on purpose and last in
+    # line — release tags are stripped before this runs, and years don't fit in
+    # three digits, so what's left is nearly always the episode.
+    re.compile(r"(?:^|[\s._])(\d{1,3})(?:v\d)?(?=$|[\s._\-\])])"),
 )
-# "Show - 2 - 05" puts the season first and the episode last, so for the dash
-# convention the *last* number is the episode, not the first one found.
-_LAST_MATCH_PATTERNS = {_EP_PATTERNS[1]}
+# "Show - 2 - 05" puts the season first and the episode last, so for these
+# conventions the *last* number is the episode, not the first one found.
+_LAST_MATCH_PATTERNS = {_EP_PATTERNS[1], _EP_PATTERNS[4]}
 _SEASON_IN_FOLDER_RE = re.compile(
     r"(?:season|serie|série|series|řada|rada|s)[\s._-]*(\d{1,2})(?!\d)", re.IGNORECASE
 )
@@ -194,23 +208,24 @@ def _lang_of(name: str) -> str | None:
     return None
 
 
-def parse_numbers(name: str, folders: tuple[str, ...] = ()) -> tuple[int | None, int | None]:
-    """(season, episode) parsed from a file name, season falling back to the
-    folder above it. Either may be None when the name doesn't say."""
+def parse_name(name: str, folders: tuple[str, ...] = ()) -> tuple[str, int | None, int | None]:
+    """(title part, season, episode) read out of a file name.
+
+    The title part is whatever stands *before* the episode marker — that is the
+    piece worth comparing against the show's names. Comparing the whole file
+    name instead fails on the most common case of all: a file called
+    "Frieren - 05.srt" for a show the library calls "Sousou no Frieren".
+
+    Season falls back to the folder above the file. Season and episode may be
+    None when the name simply doesn't say.
+    """
     stem = os.path.splitext(name)[0]
     cleaned = _RELEASE_NOISE_RE.sub(" ", stem)
 
     for pattern in _SE_PATTERNS:
         m = pattern.search(cleaned)
         if m:
-            return int(m.group(1)), int(m.group(2))
-
-    episode = None
-    for pattern in _EP_PATTERNS:
-        found = pattern.findall(cleaned.strip())
-        if found:
-            episode = int(found[-1] if pattern in _LAST_MATCH_PATTERNS else found[0])
-            break
+            return cleaned[:m.start()], int(m.group(1)), int(m.group(2))
 
     season = None
     for folder in folders:
@@ -218,6 +233,19 @@ def parse_numbers(name: str, folders: tuple[str, ...] = ()) -> tuple[int | None,
         if m:
             season = int(m.group(1))
             break
+
+    for pattern in _EP_PATTERNS:
+        matches = list(pattern.finditer(cleaned.strip()))
+        if matches:
+            m = matches[-1] if pattern in _LAST_MATCH_PATTERNS else matches[0]
+            return cleaned[:m.start()], season, int(m.group(1))
+
+    return cleaned, season, None
+
+
+def parse_numbers(name: str, folders: tuple[str, ...] = ()) -> tuple[int | None, int | None]:
+    """(season, episode) — see parse_name()."""
+    _, season, episode = parse_name(name, folders)
     return season, episode
 
 
@@ -234,16 +262,25 @@ def _build_index(root: str) -> list[Entry]:
             rel = os.path.relpath(full, root)
             folders = tuple(reversed(os.path.dirname(rel).split(os.sep))) if os.path.dirname(rel) else ()
             folders = tuple(f for f in folders if f not in ("", "."))
-            season, episode = parse_numbers(fname, folders)
+            title_part, season, episode = parse_name(fname, folders)
             try:
                 stat = os.stat(full)
                 mtime, size = stat.st_mtime, stat.st_size
             except OSError:
                 mtime, size = 0.0, 0
+            # Title part first (the most meaningful), then the whole name, then
+            # the folders above it — any of the three may be the one that names
+            # the show, depending on how the file was organised.
+            haystacks = (normalise(title_part), normalise(fname),
+                         *(normalise(f) for f in folders))
+            seen: list[str] = []
+            for h in haystacks:
+                if h and h not in seen:
+                    seen.append(h)
             entries.append(Entry(
                 path=full, rel=rel, name=fname,
                 season=season, episode=episode, lang=_lang_of(fname),
-                haystacks=tuple(h for h in (normalise(fname), *(normalise(f) for f in folders)) if h),
+                haystacks=tuple(seen),
                 mtime=mtime, size=size,
             ))
             if len(entries) >= _MAX_FILES:
@@ -283,17 +320,26 @@ def title_score(candidates: list[str], haystacks: tuple[str, ...]) -> float:
     for cand in candidates:
         if not cand:
             continue
+        cand_tokens = set(cand.split())
         for hay in haystacks:
-            if len(hay) < _MIN_CONTAINMENT:
-                continue
             if cand == hay:
                 return 1.0
+            if len(hay) < _MIN_CONTAINMENT:
+                continue          # "05" is a substring of half the strings alive
             if cand in hay or hay in cand:
                 best = max(best, 0.95)
                 continue
             tokens = [t for t in cand.split() if len(t) >= 3]
             if tokens and all(t in hay for t in tokens):
                 best = max(best, 0.9)
+                continue
+            # The other direction: the file names the show by a shorter alias
+            # ("Frieren" for "Sousou no Frieren"). One token has to carry real
+            # weight, otherwise a stray "the" would match everything.
+            hay_tokens = [t for t in hay.split() if len(t) >= 3]
+            if (hay_tokens and max(len(t) for t in hay_tokens) >= 4
+                    and all(t in cand_tokens for t in hay_tokens)):
+                best = max(best, 0.85)
                 continue
             best = max(best, SequenceMatcher(None, cand, hay).ratio())
     return best

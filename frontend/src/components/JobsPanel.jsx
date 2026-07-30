@@ -68,6 +68,40 @@ function ProgressBar({ progress }) {
   );
 }
 
+// ── Stopa kroků ───────────────────────────
+// Co úloha právě dělá je v `message`; tohle je co dělala předtím — kde hledala,
+// co našla, kam to uložila. Bez toho detail zmizí v okamžiku, kdy se přepíše.
+
+const STEPS_COLLAPSED = 4;
+
+function StepTrail({ steps }) {
+  const t = useT();
+  const [showAll, setShowAll] = useState(false);
+  if (!steps?.length) return null;
+
+  const shown = showAll ? steps : steps.slice(-STEPS_COLLAPSED);
+  const hidden = steps.length - shown.length;
+
+  return (
+    <div className="mt-1 pl-2 border-l border-border/70 flex flex-col gap-0.5">
+      {hidden > 0 && (
+        <button
+          onClick={() => setShowAll(true)}
+          className="text-[10px] text-muted/70 hover:text-text text-left transition-colors"
+        >
+          {t('job_steps_more').replace('{n}', hidden)}
+        </button>
+      )}
+      {shown.map((s, i) => (
+        <p key={`${s.ts}-${i}`}
+           className="text-[10px] leading-snug text-muted/60 break-all font-mono">
+          <span className="opacity-60 mr-1">{formatTime(s.ts)}</span>{s.text}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 // ── Jeden řádek spuštění ──────────────────
 
 function RunRow({ run, onCancel, cancelling }) {
@@ -79,6 +113,9 @@ function RunRow({ run, onCancel, cancelling }) {
   const isError   = run.status === "error";
   // Long messages or messages with pipe-separated errors benefit from expansion
   const hasLongMsg = run.message && (run.message.length > 80 || run.message.includes(" | "));
+  // A finished job with a short message can still have a trail worth reading —
+  // especially a failed one, which is exactly when people go looking.
+  const canExpand = hasLongMsg || (!isRunning && run.steps?.length > 0);
 
   // Pick text colour based on status
   const msgCls = isError || run.status === "cancelled"
@@ -108,18 +145,26 @@ function RunRow({ run, onCancel, cancelling }) {
           <p className="text-xs text-muted/70 mt-0.5 truncate italic leading-tight">{run.message}</p>
         )}
 
-        {/* Finished message — expandable when long */}
-        {!isRunning && run.message && (
+        {/* Co se dělo — u běžících vždy, u doběhlých na rozkliknutí, protože
+            tam už je hlavní sdělení ve výsledné zprávě. */}
+        {isRunning
+          ? <StepTrail steps={run.steps}/>
+          : (expanded && <StepTrail steps={run.steps}/>)}
+
+        {/* Finished message — expandable when long, or when only a trail exists */}
+        {!isRunning && (run.message || run.steps?.length > 0) && (
           <div className="mt-0.5">
-            <p className={clsx(
-              "text-xs leading-tight break-words whitespace-pre-wrap",
-              msgCls,
-              !expanded && hasLongMsg ? "line-clamp-2" : ""
-            )}>
-              {/* Replace " | " separators with newlines for readability */}
-              {run.message.replace(/ \| /g, "\n")}
-            </p>
-            {hasLongMsg && (
+            {run.message && (
+              <p className={clsx(
+                "text-xs leading-tight break-words whitespace-pre-wrap",
+                msgCls,
+                !expanded && hasLongMsg ? "line-clamp-2" : ""
+              )}>
+                {/* Replace " | " separators with newlines for readability */}
+                {run.message.replace(/ \| /g, "\n")}
+              </p>
+            )}
+            {canExpand && (
               <button
                 onClick={() => setExpanded(v => !v)}
                 className="flex items-center gap-0.5 text-[10px] text-muted hover:text-text mt-0.5 transition-colors"

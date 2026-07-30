@@ -54,6 +54,41 @@ def test_common_naming_conventions_are_recognised(folder, name):
     assert len(_search(folder, "Sousou no Frieren")) == 1, name
 
 
+@pytest.mark.parametrize("name", [
+    # How people really name files, collected by walking through the variants
+    # a Czech subtitle download actually produces.
+    "Sousou.no.Frieren.S01E05.1080p.CR.WEB-DL.AAC2.0.H.264-VARYG.srt",
+    "Sousou-no-Frieren-05.srt",          # dashes with no spaces around them
+    "Sousou no Frieren 05 CZ tit.srt",   # bare number in the middle
+    "Sousou no Frieren S1E5.srt",        # single digits
+    "Frieren - 05 [1080p].srt",          # short alias + junk after it
+    "Frieren_S01E05_CZ.srt",
+    "Frieren.EP05.CZ.ass",
+    "Frieren 1. serie - 05.srt",
+    "Frieren S01E05 (CZ titulky).srt",
+    "frieren 05.srt",
+    "Frieren/S01E05.cz.srt",             # series folder, bare episode file
+    "Titulky/Frieren/frieren.s01e05.srt",
+])
+def test_names_people_actually_use(folder, name):
+    """The library calls the show "Sousou no Frieren"; the file may not."""
+    _drop(folder, name)
+    assert len(_search(folder, "Sousou no Frieren")) == 1, name
+
+
+@pytest.mark.parametrize("name", [
+    "Bocchi the Rock S01E05.srt",      # different show
+    "Sousou no Frieren S01E06.srt",    # different episode
+    "Sousou no Frieren S02E05.srt",    # different season
+    "readme.srt",                      # no episode number at all
+    "Frieren S01E05.en.srt",           # different language
+])
+def test_names_that_must_not_match(folder, name):
+    """The looser parsing must not start attributing files by wishful thinking."""
+    _drop(folder, name)
+    assert _search(folder, "Sousou no Frieren", season=1, episode=5) == [], name
+
+
 def test_release_tags_are_not_mistaken_for_episode_numbers(folder):
     """"1080p" and the year must not end up being read as the episode."""
     _drop(folder, "Sousou no Frieren S01E05 1080p WEB-DL x265 2023.srt")
