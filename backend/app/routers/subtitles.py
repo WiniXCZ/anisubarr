@@ -494,6 +494,10 @@ def download_best(
                 continue
             scraper = factory(db)
             if scraper is None:
+                # Silence here reads as "nothing found" — say which source
+                # never got asked and why.
+                job_log.add_step(run.run_id, f"⚠ {_PROVIDER_LABELS.get(source, source)} "
+                                             f"přeskočen (nenakonfigurován nebo vypnutý)")
                 continue
             try:
                 found = scraper.search(
@@ -738,6 +742,24 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
     def _prog(current: int, detail: str = "") -> None:
         job_log.update_progress(run.run_id, current, total, detail)
 
+    # A source that can't be used was skipped in silence, so a misconfigured
+    # folder or a provider without credentials looked exactly like "nothing was
+    # found anywhere". Say it once per run instead.
+    reported_skips: set[str] = set()
+
+    def _note_skip(src: str) -> None:
+        if src in reported_skips:
+            return
+        reported_skips.add(src)
+        label = _PROVIDER_LABELS.get(src, src)
+        if src == "local":
+            folder = local_subs.folder_path(db)
+            reason = (f"složka {folder} neexistuje" if not os.path.isdir(folder)
+                      else "zdroj je vypnutý")
+        else:
+            reason = "chybí přihlašovací údaje nebo je zdroj vypnutý"
+        job_log.add_step(run.run_id, f"⚠ {label} přeskočen — {reason}")
+
     try:
         for i, ep_id in enumerate(episode_ids):
             ep = db.query(Episode).filter(Episode.id == ep_id).first()
@@ -762,6 +784,7 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
                         continue
                     scraper = factory(db)
                     if scraper is None:
+                        _note_skip(src)
                         continue
                     _msg(f"({i+1}/{total}) {ep_label} — hledám: {_PROVIDER_LABELS.get(src, src)}")
                     try:
@@ -797,8 +820,11 @@ def _download_all_task(series_id: int, episode_ids: list[int], series_title: str
 
                 if not results:
                     fail += 1
-                    error_lines.append(f"{ep_label}: nenalezen titulek")
-                    _msg(f"✗ ({i+1}/{total}) {ep_label} — nenalezen na žádném zdroji")
+                    tried = [_PROVIDER_LABELS.get(s_, s_) for s_ in sources
+                             if s_ not in reported_skips and _PROVIDER_FACTORIES.get(s_)]
+                    where = ", ".join(tried) if tried else "žádný zdroj není použitelný"
+                    error_lines.append(f"{ep_label}: nenalezen titulek ({where})")
+                    _msg(f"✗ ({i+1}/{total}) {ep_label} — nenalezeno ({where})")
                     _prog(i + 1)
                     continue
 
