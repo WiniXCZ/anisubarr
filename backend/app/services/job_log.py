@@ -177,6 +177,13 @@ def is_job_running(job_id: str) -> bool:
         return job_id in _running_by_job_id
 
 
+def current_run_id(job_id: str) -> str | None:
+    """Run id of the in-flight run of this job, so code that didn't start the
+    run (scheduled jobs get theirs from the wrapper) can still report progress."""
+    with _lock:
+        return _running_by_job_id.get(job_id)
+
+
 def update_progress(run_id: str, current: int, total: int, message: str = "") -> None:
     """Update live progress (0–100) and optional message for a running job."""
     pct = round(current / total * 100) if total > 0 else 0
