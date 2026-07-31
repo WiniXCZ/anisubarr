@@ -397,8 +397,10 @@ def _sync_series_raw(raw: dict, quality_map: dict, tag_map: dict):
         _title_changed = is_new or (fields.get("title") and fields.get("title") != row.title)
         if not row.emby_id or _title_changed:
             try:
-                from ..services.emby import fetch_emby_id
-                emby_id = fetch_emby_id(row.title, year=row.year)
+                from ..services.emby import ensure_emby_id
+                # Provider ids + alternate titles, because the library rarely
+                # spells a show exactly the way Sonarr does.
+                emby_id = ensure_emby_id(row) if not row.emby_id else row.emby_id
                 if emby_id:
                     row.emby_id = emby_id
                     log.debug("[sync] Emby ID for '%s': %s", row.title, emby_id)

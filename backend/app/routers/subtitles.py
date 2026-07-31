@@ -440,13 +440,14 @@ def download_subtitle(
         if _read_setting("auto_discord_on_subtitles", db) != "false":
             try:
                 from ..services import discord as discord_svc
+                from ..services import emby as emby_svc
                 series_obj = ep.series
                 ep_label = f"S{ep.season_number:02d}E{ep.episode_number:02d}"
                 discord_svc.notify_subtitles_downloaded(
                     title=series_obj.title if series_obj else "?",
                     episode=ep_label,
                     source=req.source,
-                    emby_id=getattr(series_obj, "emby_id", None) if series_obj else None,
+                    emby_id=(emby_svc.ensure_emby_id(series_obj, db) if series_obj else None),
                     db=db,
                 )
             except Exception:

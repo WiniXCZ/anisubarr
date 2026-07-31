@@ -110,20 +110,28 @@ def _message_prefix(db=None) -> str:
 
 def _emby_play_url(db=None, emby_id: str | None = None) -> str | None:
     """
-    Return Emby URL for the 'Přehrát' link.
+    Return the Emby/Jellyfin URL for the 'Přehrát' link.
 
-    If *emby_id* is provided, returns a deep link directly to that item:
-      {emby_external_url}/web/index.html#!/item?id={emby_id}
-    Otherwise falls back to the Emby homepage (emby_external_url).
+    With *emby_id* it is a deep link straight to the item; without one it can
+    only be the homepage, which is what the link degrades to when a series has
+    no emby_id stored.
+
+    Emby and Jellyfin route their web client differently (``#!/item`` vs
+    ``#/details``), and the wrong one silently lands on the homepage — the same
+    symptom as a missing id — so the server kind decides the shape.
+
     Returns None if emby_external_url is not configured.
     """
     v = _get_db_setting("emby_external_url", db)
     if not v or not v.strip():
         return None
     base = v.strip().rstrip("/")
-    if emby_id:
-        return f"{base}/web/index.html#!/item?id={emby_id}"
-    return base
+    if not emby_id:
+        return base
+    from . import emby as emby_svc
+    if emby_svc.server_kind(db) == "jellyfin":
+        return f"{base}/web/index.html#/details?id={emby_id}"
+    return f"{base}/web/index.html#!/item?id={emby_id}"
 
 
 def _use_embed(db=None) -> bool:
