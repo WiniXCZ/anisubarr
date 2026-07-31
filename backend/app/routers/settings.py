@@ -103,6 +103,10 @@ EDITABLE_KEYS: set[str] = {
     "subtitle_preferred_provider",     # str  — local / hiyori / hns / kamui / gensubs / any
     # ── Ruční složka ─────────────────────────────────────────────────────
     "local_subtitle_dir",              # str  — folder searched before any provider on the net
+    # ── Emby / oznámení ──────────────────────────────────────────────────
+    "discord_wait_for_emby",           # bool — post the promotion notice only once Emby has the show
+    "discord_wait_for_emby_seconds",   # int  — how long to wait for it (default 300)
+    "emby_server_id",                  # str  — read from the library item, used in deep links
     # ── Scraper behaviour ────────────────────────────────────────────────
     "scraper_timeout",                 # int  — HTTP timeout in seconds (default 30)
     "scraper_max_results",             # int  — max results per provider (0 = unlimited)

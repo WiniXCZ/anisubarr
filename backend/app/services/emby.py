@@ -96,6 +96,50 @@ def _query_items(host: str, api_key: str, params: dict) -> list[dict]:
     return (r.json() or {}).get("Items") or []
 
 
+def find_series_item(
+    series_name: str,
+    year: int | None = None,
+    provider_ids: dict | None = None,
+    alt_titles: list[str] | None = None,
+) -> dict | None:
+    """The library item for a series, or None. See fetch_emby_id() for the
+    matching strategy; this returns the whole item so callers can also use the
+    ServerId, which makes the web deep link unambiguous."""
+    host, api_key = _get_config()
+    if not host:
+        return None
+
+    try:
+        for key in ("tvdb", "tmdb", "imdb"):
+            value = (provider_ids or {}).get(key)
+            if not value:
+                continue
+            items = _query_items(host, api_key,
+                                 {"AnyProviderIdEquals": f"{key}.{value}"})
+            if items:
+                return items[0]
+
+        candidates = [series_name, *(alt_titles or [])]
+        seen: set[str] = set()
+        first_hit = None
+        for title in candidates:
+            norm = _norm_title(title)
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            items = _query_items(host, api_key, {"searchTerm": title})
+            if items and first_hit is None:
+                first_hit = items[0]
+            for item in items:
+                if _norm_title(item.get("Name") or "") == norm:
+                    return item
+
+        return first_hit
+    except Exception as exc:
+        log.warning("Emby find_series_item('%s') failed: %s", series_name, exc)
+        return None
+
+
 def fetch_emby_id(
     series_name: str,
     year: int | None = None,
@@ -117,39 +161,9 @@ def fetch_emby_id(
 
     Returns None if not found / Emby not configured / any error.
     """
-    host, api_key = _get_config()
-    if not host:
-        return None
-
-    try:
-        for key in ("tvdb", "tmdb", "imdb"):
-            value = (provider_ids or {}).get(key)
-            if not value:
-                continue
-            items = _query_items(host, api_key,
-                                 {"AnyProviderIdEquals": f"{key}.{value}"})
-            if items:
-                return items[0].get("Id")
-
-        candidates = [series_name, *(alt_titles or [])]
-        seen: set[str] = set()
-        first_hit = None
-        for title in candidates:
-            norm = _norm_title(title)
-            if not norm or norm in seen:
-                continue
-            seen.add(norm)
-            items = _query_items(host, api_key, {"searchTerm": title})
-            if items and first_hit is None:
-                first_hit = items[0].get("Id")
-            for item in items:
-                if _norm_title(item.get("Name") or "") == norm:
-                    return item.get("Id")
-
-        return first_hit
-    except Exception as exc:
-        log.warning("Emby fetch_emby_id('%s') failed: %s", series_name, exc)
-        return None
+    item = find_series_item(series_name, year=year, provider_ids=provider_ids,
+                            alt_titles=alt_titles)
+    return item.get("Id") if item else None
 
 
 def ensure_emby_id(series, db=None) -> str | None:
@@ -180,7 +194,7 @@ def ensure_emby_id(series, db=None) -> str | None:
         except Exception:
             pass
 
-    found = fetch_emby_id(
+    item = find_series_item(
         getattr(series, "title", "") or "",
         year=getattr(series, "year", None),
         provider_ids={
@@ -190,6 +204,11 @@ def ensure_emby_id(series, db=None) -> str | None:
         },
         alt_titles=[t for t in alternates if isinstance(t, str)],
     )
+    if not item:
+        return None
+
+    found = item.get("Id")
+    _remember_server_id(item.get("ServerId"), db)
     if found and db is not None:
         try:
             series.emby_id = found
@@ -197,6 +216,72 @@ def ensure_emby_id(series, db=None) -> str | None:
         except Exception:
             db.rollback()
     return found
+
+
+def _remember_server_id(server_id: str | None, db=None) -> None:
+    """The server id is the same for every item, so it's stored once and reused
+    in deep links — Emby resolves them more reliably with it."""
+    if not server_id:
+        return
+    try:
+        from ..utils.settings_helper import read_setting
+        if (read_setting("emby_server_id", db) or "").strip() == server_id:
+            return
+    except Exception:
+        pass
+    try:
+        from ..database import SessionLocal
+        from ..models.app_settings import AppSetting
+        own = db is None
+        session = SessionLocal() if own else db
+        try:
+            row = session.query(AppSetting).filter(
+                AppSetting.key == "emby_server_id").first()
+            if row:
+                row.value = server_id
+            else:
+                session.add(AppSetting(key="emby_server_id", value=server_id))
+            session.commit()
+        finally:
+            if own:
+                session.close()
+    except Exception as exc:
+        log.debug("Emby server id se nepodařilo uložit: %s", exc)
+
+
+def wait_for_series(series, db=None, timeout: float = 300.0,
+                    interval: float | None = None) -> str | None:
+    """Poll the library until the series shows up, then return its id.
+
+    A freshly promoted show is moved into the library folder moments before the
+    notification goes out, so at that instant it usually isn't in Emby yet.
+    Waiting for the scan to pick it up is the difference between a link that
+    opens the show and one that opens the homepage.
+
+    Returns None on timeout — the caller still sends the message, just without
+    a deep link. A notification is worth more than a perfect link.
+    """
+    import time
+
+    host, _ = _get_config()
+    if not host:
+        return None
+
+    # Derived from the timeout so a short wait still checks more than once —
+    # a fixed 15 s interval would turn "wait 10 s" into a single attempt.
+    if interval is None:
+        interval = min(15.0, max(1.0, timeout / 6))
+
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        found = ensure_emby_id(series, db)
+        if found:
+            return found
+        if time.monotonic() + interval >= deadline:
+            log.info("Emby: '%s' se do %.0f s v knihovně neobjevil",
+                     getattr(series, "title", "?"), timeout)
+            return None
+        time.sleep(interval)
 
 
 def trigger_library_scan(*, series_title: str = "") -> str:
