@@ -210,13 +210,16 @@ def check_and_promote(db: Session, series: Series) -> dict:
         if _read_setting("auto_discord_on_promote", db) != "false":
             try:
                 from . import discord as discord_svc
+                from . import emby as emby_svc
                 discord_svc.notify_promoted(
                     title=series.title,
                     series_id=series.id,
                     poster_url=getattr(series, "poster_url", None),
                     overview=getattr(series, "overview_cs", None) or getattr(series, "overview", None),
                     has_cs=True,
-                    emby_id=getattr(series, "emby_id", None),
+                    # Looked up now if it's missing — a link to the Emby
+                    # homepage is not what "Přehrát" promises.
+                    emby_id=emby_svc.ensure_emby_id(series, db),
                     db=db,
                 )
             except Exception:
@@ -331,13 +334,14 @@ def force_publish(db: Session, series: Series) -> dict:
     if sonarr_action in ("moved", "tag_only"):
         try:
             from . import discord as discord_svc
+            from . import emby as emby_svc
             discord_svc.notify_promoted(
                 title=series.title,
                 series_id=series.id,
                 poster_url=getattr(series, "poster_url", None),
                 overview=getattr(series, "overview_cs", None) or getattr(series, "overview", None),
                 has_cs=True,
-                emby_id=getattr(series, "emby_id", None),
+                emby_id=emby_svc.ensure_emby_id(series, db),
                 db=db,
             )
         except Exception:
