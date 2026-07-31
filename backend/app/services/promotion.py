@@ -206,32 +206,23 @@ def check_and_promote(db: Session, series: Series) -> dict:
             except Exception as e:
                 log.warning("NFO refresh failed after auto-promotion of '%s': %s", series.title, e)
 
-        # Auto task: Discord notification after promotion
-        if _read_setting("auto_discord_on_promote", db) != "false":
-            try:
-                from . import discord as discord_svc
-                from . import emby as emby_svc
-                discord_svc.notify_promoted(
-                    title=series.title,
-                    series_id=series.id,
-                    poster_url=getattr(series, "poster_url", None),
-                    overview=getattr(series, "overview_cs", None) or getattr(series, "overview", None),
-                    has_cs=True,
-                    # Looked up now if it's missing — a link to the Emby
-                    # homepage is not what "Přehrát" promises.
-                    emby_id=emby_svc.ensure_emby_id(series, db),
-                    db=db,
-                )
-            except Exception:
-                pass
-
-        # Auto task: Emby library scan after auto-promotion
+        # Auto task: Emby library scan after auto-promotion. Runs *before* the
+        # notification: the folder has just moved, so the show is not in the
+        # library yet and the "Přehrát" link would have nothing to point at.
         if _read_setting("auto_emby_scan_on_promote", db) != "false":
             try:
                 from . import emby as emby_svc
                 emby_svc.trigger_library_scan(series_title=series.title)
             except Exception as e:
                 log.debug("Emby scan skipped after auto-promotion of '%s': %s", series.title, e)
+
+        # Auto task: Discord notification, sent once Emby has the show.
+        if _read_setting("auto_discord_on_promote", db) != "false":
+            try:
+                from . import discord as discord_svc
+                discord_svc.notify_promoted_when_ready(series.id)
+            except Exception:
+                pass
 
         return {
             "action":    "promoted",
@@ -332,23 +323,12 @@ def force_publish(db: Session, series: Series) -> dict:
 
     # Discord + Emby scan — only when Sonarr actually moved or tagged
     if sonarr_action in ("moved", "tag_only"):
-        try:
-            from . import discord as discord_svc
-            from . import emby as emby_svc
-            discord_svc.notify_promoted(
-                title=series.title,
-                series_id=series.id,
-                poster_url=getattr(series, "poster_url", None),
-                overview=getattr(series, "overview_cs", None) or getattr(series, "overview", None),
-                has_cs=True,
-                emby_id=emby_svc.ensure_emby_id(series, db),
-                db=db,
-            )
-        except Exception:
-            pass
+        from ..utils.settings_helper import read_setting as _read_setting
+        # Notification is deferred until Emby has the show — the library scan
+        # below is what puts it there.
+        notify_after_scan = _read_setting("auto_discord_on_promote", db) != "false"
 
         # Regenerate NFO so Emby sees EN title + Czech description (controlled by setting, default true)
-        from ..utils.settings_helper import read_setting as _read_setting
         if _read_setting("nfo_auto_refresh_after_promo", db) != "false":
             try:
                 from . import nfo as nfo_svc
@@ -361,8 +341,16 @@ def force_publish(db: Session, series: Series) -> dict:
 
         # Trigger Emby library scan so the new anime appears immediately
         job_log.update_message(run.run_id, "Spouštím skenování knihovny Emby…")
+        from . import emby as emby_svc
         emby_result = emby_svc.trigger_library_scan(series_title=series.title)
         log.info("Emby scan result for '%s': %s", series.title, emby_result)
+
+        if notify_after_scan:
+            try:
+                from . import discord as discord_svc
+                discord_svc.notify_promoted_when_ready(series.id)
+            except Exception:
+                pass
 
     # Build final job message
     sonarr_label = {

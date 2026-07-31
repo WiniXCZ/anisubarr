@@ -129,9 +129,19 @@ def _emby_play_url(db=None, emby_id: str | None = None) -> str | None:
     if not emby_id:
         return base
     from . import emby as emby_svc
+    # serverId comes from the library item itself; Emby resolves deep links
+    # more reliably with it, and it costs nothing when we don't have it.
+    suffix = ""
+    try:
+        from ..utils.settings_helper import read_setting
+        server_id = (read_setting("emby_server_id", db) or "").strip()
+        if server_id:
+            suffix = f"&serverId={server_id}"
+    except Exception:
+        pass
     if emby_svc.server_kind(db) == "jellyfin":
-        return f"{base}/web/index.html#/details?id={emby_id}"
-    return f"{base}/web/index.html#!/item?id={emby_id}"
+        return f"{base}/web/index.html#/details?id={emby_id}{suffix}"
+    return f"{base}/web/index.html#!/item?id={emby_id}{suffix}"
 
 
 def _use_embed(db=None) -> bool:
@@ -252,6 +262,60 @@ def notify_promoted(
         embed["thumbnail"] = {"url": poster_url}
     _dispatch("discord_notify_promoted", embed, f"✅ Povýšeno: {title}", db=db)
     log.info("Discord: povýšení odesláno pro '%s'", title)
+
+
+def notify_promoted_when_ready(series_id: int) -> None:
+    """Send the promotion notice once the show exists in Emby.
+
+    A promotion moves the folder and *then* asks Emby to scan, so at that
+    instant the show is usually not in the library yet — the "Přehrát" link
+    would have nothing to point at but the homepage. This waits in the
+    background for the scan to pick it up and only then posts.
+
+    On timeout the message is sent anyway, just without a deep link: a late
+    notification is still worth more than none. Switch the waiting off with
+    discord_wait_for_emby=false to post immediately.
+    """
+    import threading
+
+    def _run() -> None:
+        from ..database import SessionLocal
+        from ..models.series import Series
+        from ..utils.settings_helper import read_setting
+        from . import emby as emby_svc
+
+        db = SessionLocal()
+        try:
+            series = db.query(Series).filter(Series.id == series_id).first()
+            if series is None:
+                return
+
+            emby_id = getattr(series, "emby_id", None)
+            if not emby_id and read_setting("discord_wait_for_emby", db) != "false":
+                try:
+                    timeout = float(read_setting("discord_wait_for_emby_seconds", db) or 300)
+                except (TypeError, ValueError):
+                    timeout = 300.0
+                emby_id = emby_svc.wait_for_series(series, db, timeout=timeout)
+            elif not emby_id:
+                emby_id = emby_svc.ensure_emby_id(series, db)
+
+            notify_promoted(
+                title=series.title,
+                series_id=series.id,
+                poster_url=getattr(series, "poster_url", None),
+                overview=getattr(series, "overview_cs", None) or getattr(series, "overview", None),
+                has_cs=True,
+                emby_id=emby_id,
+                db=db,
+            )
+        except Exception as exc:
+            log.warning("Discord: odložené oznámení pro sérii %s selhalo: %s",
+                        series_id, exc)
+        finally:
+            db.close()
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def notify_demoted(
