@@ -1386,6 +1386,9 @@ def diagnose_episode(
             "složka s videem tu neexistuje — sedí mapování cest "
             "(Nastavení → Síť: prefix Sonarru vs. lokální prefix)?"
         )
+        # Don't stop at "it's wrong" — find where the file actually is and say
+        # which two prefixes would make it work.
+        out["suggestion"] = path_resolver.suggest_mapping(ep.file_path)
         return out
 
     try:
