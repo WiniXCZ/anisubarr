@@ -10,7 +10,7 @@ import {
   downloadBest, deleteSubsByEpisodes, refreshSeriesNfo, getEmbySeriesUrl,
   getAiStatus, fetchEnglishTitle, syncOne, seerrReport,
   getAuditLog, getAuditStatus, runAuditCheck, scheduleBulkDownload,
-  diagnoseEpisodeSubs,
+  diagnoseEpisodeSubs, updateSettings,
 } from '../api/client';
 import api from '../api/client';
 import { useToast } from '../context/ToastContext';
@@ -81,16 +81,52 @@ function LangChips({ ep, compact }) {
 /** Explains a missing subtitle instead of leaving a red badge to guess at. */
 function MissingReason({ episodeId }) {
   const t = useT();
+  const toast = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [applying, setApplying] = useState(false);
 
   if (data) {
+    const fix = data.suggestion;
     return (
       <div style={{ font: '400 11px JetBrains Mono', color: T.textMute, lineHeight: 1.6 }}>
         <div style={{ color: T.textDim }}>{data.verdict}</div>
         {data.folder && <div>{t('sd_diag_folder')}: {data.folder}</div>}
         {data.files_in_folder?.length > 0 && (
           <div>{t('sd_diag_found')}: {data.files_in_folder.slice(0, 6).join(', ')}</div>
+        )}
+        {/* The file was located elsewhere — offer the mapping that reaches it
+            instead of leaving the two prefixes to guesswork. */}
+        {fix && (
+          <div style={{ marginTop: 6, padding: '7px 9px', borderRadius: 8,
+                        background: T.panel, border: `1px solid ${T.border}` }}>
+            <div style={{ color: T.statusDone }}>{t('sd_diag_fix_found')}</div>
+            <div>{fix.found_path}</div>
+            <div style={{ marginTop: 4 }}>
+              {t('sd_diag_fix_prefixes')
+                .replace('{sonarr}', fix.sonarr_prefix)
+                .replace('{local}', fix.local_prefix)}
+            </div>
+            <button
+              disabled={applying}
+              onClick={async () => {
+                setApplying(true);
+                try {
+                  await updateSettings({
+                    path_sonarr_prefix: fix.sonarr_prefix,
+                    path_local_prefix: fix.local_prefix,
+                  });
+                  toast.success(t('sd_diag_fix_applied'));
+                } catch (e) {
+                  toast.error(e?.response?.data?.detail || t('sd_diag_fix_failed'));
+                } finally {
+                  setApplying(false);
+                }
+              }}
+              style={{ ...btnPrimary(T), padding: '4px 10px', fontSize: 11, marginTop: 6 }}>
+              {applying ? t('sd_diag_fix_applying') : t('sd_diag_fix_apply')}
+            </button>
+          </div>
         )}
       </div>
     );

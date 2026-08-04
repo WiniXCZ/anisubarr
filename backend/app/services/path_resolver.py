@@ -90,6 +90,52 @@ def media_access_mode() -> str:
     return mode if mode in ("smb", "local") else "local"
 
 
+_SEARCH_ROOTS = ("/media", "/cache", "/mnt/user", "/mnt", "/data", "/subs")
+
+
+def suggest_mapping(sonarr_path: str) -> dict | None:
+    """Work out the path mapping by finding where the file really is.
+
+    Getting PATH_SONARR_PREFIX / PATH_LOCAL_PREFIX right is guesswork from the
+    outside: Sonarr says ``/data/media/anime_series/…`` and only the person
+    running the container knows which mount that is here. But the answer is on
+    the disk — so the file is looked for under the usual roots, stripping one
+    leading component of the Sonarr path at a time, and the pair of prefixes
+    that made it match is what should be configured.
+
+    Returns {"sonarr_prefix", "local_prefix", "found_path"} or None.
+    """
+    if not sonarr_path:
+        return None
+
+    parts = [p for p in sonarr_path.replace("\\", "/").split("/") if p]
+    if not parts:
+        return None
+
+    roots = []
+    for candidate in (_cfg_value("path_local_prefix", ""),
+                      _cfg_value("path_cache_prefix", ""), *_SEARCH_ROOTS):
+        candidate = (candidate or "").rstrip("/")
+        if candidate and candidate not in roots:
+            roots.append(candidate)
+
+    # Longest suffix first: matching more of the original path is a stronger
+    # signal than matching just the file name, which any copy would satisfy.
+    for cut in range(len(parts) - 1):
+        suffix = parts[cut:]
+        stripped = "/" + "/".join(parts[:cut]) if cut else ""
+        for root in roots:
+            full = os.path.join(root, *suffix)
+            try:
+                if os.path.isfile(full):
+                    return {"sonarr_prefix": stripped or "/",
+                            "local_prefix": root,
+                            "found_path": full}
+            except OSError:
+                continue
+    return None
+
+
 def resolve(sonarr_path: str) -> str:
     """
     Convert a Sonarr-side path to a locally accessible path.

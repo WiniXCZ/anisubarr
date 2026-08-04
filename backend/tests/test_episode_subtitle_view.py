@@ -221,6 +221,52 @@ def test_diagnose_points_at_the_path_mapping(episode, auth):
     assert body["folder_exists"] is False
 
 
+def test_diagnose_works_out_the_right_path_mapping(episode, auth):
+    """"Wrong mapping" alone is a puzzle; the file's real location is the answer."""
+    ep_id, folder = episode
+    _drop(folder, f"{_BASE}.cs.srt")
+    real_video = os.path.join(folder, f"{_BASE}.mkv")
+
+    db = SessionLocal()
+    try:
+        # Sonarr's own view of the same file, with a prefix that means nothing here.
+        db.query(Episode).filter(Episode.id == ep_id).update(
+            {"file_path": f"/data/media/anime_series/Show/Season 01/{_BASE}.mkv"})
+        db.commit()
+    finally:
+        db.close()
+
+    # The mount is the folder *above* the season — matching on the file name
+    # alone is deliberately not enough, since the prefix it implies would only
+    # ever fit that one episode.
+    root = os.path.dirname(folder)
+    with patch.object(path_resolver, "_SEARCH_ROOTS", (root,)), \
+         patch.object(path_resolver, "_cfg_value", lambda key, default="": ""):
+        body = client.get(f"/api/subtitles/diagnose/{ep_id}", headers=auth).json()
+
+    fix = body["suggestion"]
+    assert fix["found_path"] == real_video
+    assert fix["local_prefix"] == root
+    assert fix["sonarr_prefix"] == "/data/media/anime_series/Show"
+
+
+def test_no_mapping_is_suggested_when_the_file_is_nowhere(episode, auth):
+    """A guess would be worse than saying nothing."""
+    ep_id, folder = episode
+    db = SessionLocal()
+    try:
+        db.query(Episode).filter(Episode.id == ep_id).update(
+            {"file_path": "/data/nic/takoveho/neexistuje.mkv"})
+        db.commit()
+    finally:
+        db.close()
+
+    with patch.object(path_resolver, "_SEARCH_ROOTS", (os.path.dirname(folder),)), \
+         patch.object(path_resolver, "_cfg_value", lambda key, default="": ""):
+        body = client.get(f"/api/subtitles/diagnose/{ep_id}", headers=auth).json()
+    assert body["suggestion"] is None
+
+
 def test_diagnose_reports_a_subtitle_named_after_another_release(episode, auth):
     ep_id, folder = episode
     _drop(folder, "[SubsPlease] Frieren - 01.cs.srt")
