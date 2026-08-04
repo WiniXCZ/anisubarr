@@ -13,6 +13,7 @@ import os
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -35,6 +36,7 @@ EDITABLE_KEYS: set[str] = {
     "path_sonarr_prefix",  # str — leading part of Sonarr's own paths to strip, e.g. /data
     "path_local_prefix",   # str — replacement prefix: local root dir or \\host\share
     "path_cache_prefix",   # str — optional fallback prefix for cache-only Unraid shares
+    "path_mappings",       # JSON — [{from,to},…] one rule per Sonarr root; longest prefix wins
     # ── AI translation ────────────────────────────────────────────────────
     "ai_translation_provider",  # active provider: deepseek/openrouter/localai/ollama/claude
     "deepseek_api_key", "deepseek_model",
@@ -312,6 +314,55 @@ def save_settings(
 
 
 # ── POST /api/settings/test/{service} ─────────────────────────────────────────
+
+class PathMappingBody(BaseModel):
+    sonarr_prefix: str
+    local_prefix: str
+
+
+@router.post("/path-mapping")
+def add_path_mapping(
+    body: PathMappingBody,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> dict:
+    """Add one Sonarr→local path rule, keeping the ones already configured.
+
+    A library spread over several Sonarr roots needs a rule per root, so this
+    appends instead of replacing — overwriting the single legacy pair would fix
+    one root and break another. Merging server-side also keeps two browser tabs
+    from clobbering each other's list.
+    """
+    import json
+
+    src = body.sonarr_prefix.strip().rstrip("/\\")
+    dst = body.local_prefix.strip().rstrip("/\\")
+    if not src or not dst:
+        raise HTTPException(400, "Obě cesty musí být vyplněné")
+
+    row = db.query(AppSetting).filter(AppSetting.key == "path_mappings").first()
+    rules: list[dict] = []
+    if row and row.value:
+        try:
+            rules = [r for r in json.loads(row.value)
+                     if isinstance(r, dict) and r.get("from") and r.get("to")]
+        except Exception:
+            rules = []
+
+    rules = [r for r in rules if r["from"].rstrip("/\\") != src]
+    rules.append({"from": src, "to": dst})
+    value = json.dumps(rules, ensure_ascii=False)
+
+    if row:
+        row.value = value
+    else:
+        db.add(AppSetting(key="path_mappings", value=value))
+    db.commit()
+
+    from ..services import path_resolver
+    path_resolver._cfg_cache_clear()
+    return {"mappings": rules}
+
 
 @router.post("/test/{service}")
 async def test_connection(
