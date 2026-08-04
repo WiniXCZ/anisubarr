@@ -41,40 +41,39 @@ const LANG_LABEL = { cs: 'CZ', sk: 'SK', en: 'EN', ja: 'JA', pl: 'PL', de: 'DE',
 function LangChips({ ep, compact }) {
   const t = useT();
   const subs = ep.subtitles || [];
-
-  if (!subs.length) {
-    return (
-      <span style={{
-        font: '700 10px JetBrains Mono', color: T.statusEnded,
-        background: `${T.statusEnded}1a`, border: `1px solid ${T.statusEnded}44`,
-        padding: '2px 7px', borderRadius: 4, whiteSpace: 'nowrap',
-      }}>× {t('sd_sub_missing')}</span>
-    );
-  }
-
   const sourceLabel = {
     db: t('sd_sub_src_db'), disk: t('sd_sub_src_disk'), embedded: t('sd_sub_src_embedded'),
   };
+  const describe = s => `${LANG_LABEL[s.lang] || s.lang.toUpperCase()} — ` +
+    (s.sources || []).map(x => sourceLabel[x] || x).join(', ');
+
+  // A WEB-DL carries a dozen embedded tracks; showing them all buries the one
+  // thing this list is about. Czech (and Slovak, close enough to watch) get a
+  // chip of their own, the rest collapse into a count.
+  const cs = subs.find(s => s.lang === 'cs');
+  const sk = subs.find(s => s.lang === 'sk');
+  const rest = subs.filter(s => s.lang !== 'cs' && s.lang !== 'sk');
+
+  const chip = (label, color, dashed, title, key) => (
+    <span key={key} title={title} style={{
+      font: '700 10px JetBrains Mono', color,
+      background: `${color}1a`, border: `1px ${dashed ? 'dashed' : 'solid'} ${color}55`,
+      padding: compact ? '1px 5px' : '2px 7px', borderRadius: 4, whiteSpace: 'nowrap',
+    }}>{label}</span>
+  );
+
+  const onlyEmbedded = s => s.sources.length === 1 && s.sources[0] === 'embedded';
 
   return (
-    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-      {subs.map(s => {
-        const isCs = s.lang === 'cs';
-        const color = isCs ? T.statusDone : T.textMute;
-        const onlyEmbedded = s.sources.length === 1 && s.sources[0] === 'embedded';
-        return (
-          <span key={s.lang}
-            title={`${(s.sources || []).map(x => sourceLabel[x] || x).join(', ')}`}
-            style={{
-              font: '700 10px JetBrains Mono', color,
-              background: `${color}1a`,
-              border: `1px ${onlyEmbedded ? 'dashed' : 'solid'} ${color}55`,
-              padding: compact ? '1px 5px' : '2px 7px', borderRadius: 4, whiteSpace: 'nowrap',
-            }}>
-            {LANG_LABEL[s.lang] || s.lang.toUpperCase()}
-          </span>
-        );
-      })}
+    <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'flex-end' }}>
+      {cs
+        ? chip('CZ', T.statusDone, onlyEmbedded(cs), describe(cs), 'cs')
+        : chip(`× ${t('sd_sub_missing')}`, T.statusEnded, false, null, 'none')}
+      {sk && chip('SK', T.statusUpcoming, onlyEmbedded(sk), describe(sk), 'sk')}
+      {rest.length > 0 && chip(
+        `+${rest.length}`, T.textMute, false,
+        rest.map(describe).join('\n'), 'rest',
+      )}
     </div>
   );
 }
@@ -288,8 +287,30 @@ function EpisodeDetail({ ep, series, onSearchSubs, onClose, onPlay, onEdit }) {
             <span style={{ color:T.textDim }}>{t('sd_path_colon')} </span>{folder}
           </div>
         )}
-        {/* No subtitles found — say why instead of leaving a red badge to guess at */}
-        {!(ep.subtitles || []).length && ep.has_file && (
+        {/* The row only has room for Czech; the full list belongs here. */}
+        {(ep.subtitles || []).length > 0 && (
+          <div style={{ marginTop:8, display:'flex', gap:6, flexWrap:'wrap' }}>
+            {ep.subtitles.map(sub => (
+              <span key={sub.lang} style={{
+                font:'600 10px JetBrains Mono',
+                color: sub.lang === 'cs' ? T.statusDone : T.textMute,
+                border:`1px solid ${T.border}`, background:T.panel,
+                padding:'2px 7px', borderRadius:4, whiteSpace:'nowrap',
+              }}>
+                {(sub.lang || '?').toUpperCase()}
+                <span style={{ opacity:0.6 }}>
+                  {' · '}{(sub.sources || []).map(x => ({
+                    db: t('sd_sub_src_db'), disk: t('sd_sub_src_disk'),
+                    embedded: t('sd_sub_src_embedded'),
+                  }[x] || x)).join(', ')}
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
+        {/* Missing *Czech* is what matters — a file full of embedded English
+            tracks still needs the explanation. */}
+        {!(ep.subtitles || []).some(s => s.lang === 'cs') && ep.has_file && (
           <div style={{ marginTop:8 }}>
             <MissingReason episodeId={ep.id}/>
           </div>
