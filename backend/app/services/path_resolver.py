@@ -136,6 +136,42 @@ def suggest_mapping(sonarr_path: str) -> dict | None:
     return None
 
 
+def mappings() -> list[dict]:
+    """Every configured path mapping, longest Sonarr prefix first.
+
+    One prefix pair only covers a library that lives under a single root. A
+    Sonarr with both ``/data/media/anime_series`` and ``/data/nekompatibilní
+    anime`` needs one rule per root — matching the longest prefix first so a
+    specific rule wins over a general one.
+
+    The legacy single pair is kept as the last rule, so nothing that worked
+    before stops working.
+    """
+    import json
+
+    rules: list[dict] = []
+    raw = _cfg_value("path_mappings", "")
+    if raw:
+        try:
+            for item in json.loads(raw):
+                src = (item.get("from") or "").strip().rstrip("/\\")
+                dst = (item.get("to") or "").strip().rstrip("/\\")
+                if src and dst:
+                    rules.append({"from": src, "to": dst})
+        except Exception as exc:
+            log.warning("path_mappings není platný JSON (%s) — ignoruji", exc)
+
+    from ..config import get_settings
+    cfg = get_settings()
+    legacy_src = _cfg_value("path_sonarr_prefix", cfg.path_sonarr_prefix or "").rstrip("/\\")
+    legacy_dst = _cfg_value("path_local_prefix", cfg.path_local_prefix or "").rstrip("/\\")
+    if legacy_src and legacy_dst and not any(r["from"] == legacy_src for r in rules):
+        rules.append({"from": legacy_src, "to": legacy_dst})
+
+    rules.sort(key=lambda r: len(r["from"]), reverse=True)
+    return rules
+
+
 def resolve(sonarr_path: str) -> str:
     """
     Convert a Sonarr-side path to a locally accessible path.
@@ -148,8 +184,16 @@ def resolve(sonarr_path: str) -> str:
     from ..config import get_settings
     cfg = get_settings()
 
-    sonarr_prefix = _cfg_value("path_sonarr_prefix", cfg.path_sonarr_prefix or "").rstrip("/\\")
-    local_prefix  = _cfg_value("path_local_prefix",  cfg.path_local_prefix  or "").rstrip("/\\")
+    normalised_in = sonarr_path.replace("\\", "/")
+    sonarr_prefix = local_prefix = ""
+    for rule in mappings():
+        if normalised_in.startswith(rule["from"].replace("\\", "/")):
+            sonarr_prefix, local_prefix = rule["from"], rule["to"]
+            break
+
+    if not sonarr_prefix:
+        sonarr_prefix = _cfg_value("path_sonarr_prefix", cfg.path_sonarr_prefix or "").rstrip("/\\")
+        local_prefix  = _cfg_value("path_local_prefix",  cfg.path_local_prefix  or "").rstrip("/\\")
 
     if not sonarr_prefix or not local_prefix:
         # No mapping configured — return as-is and hope for the best

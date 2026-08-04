@@ -122,6 +122,9 @@ export const getLocalSubFolder   = (report = false) =>
   api.get(`/subtitles/local-folder${report ? "?report=true" : ""}`);
 // Why an episode counts as missing — resolved path, folder contents, DB rows.
 export const diagnoseEpisodeSubs = (epId) => api.get(`/subtitles/diagnose/${epId}`);
+// Appends one Sonarr→local path rule, keeping the ones already configured.
+export const addPathMapping     = (sonarr_prefix, local_prefix) =>
+  api.post("/settings/path-mapping", { sonarr_prefix, local_prefix });
 export const deleteDiskFile     = (path) => api.post("/subtitles/delete-file", { file_path: path });
 export const uploadSubtitle        = (formData) => api.post("/subtitles/upload", formData, {
   headers: { "Content-Type": "multipart/form-data" },

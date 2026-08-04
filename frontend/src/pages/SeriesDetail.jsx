@@ -10,7 +10,7 @@ import {
   downloadBest, deleteSubsByEpisodes, refreshSeriesNfo, getEmbySeriesUrl,
   getAiStatus, fetchEnglishTitle, syncOne, seerrReport,
   getAuditLog, getAuditStatus, runAuditCheck, scheduleBulkDownload,
-  diagnoseEpisodeSubs, updateSettings,
+  diagnoseEpisodeSubs, addPathMapping,
 } from '../api/client';
 import api from '../api/client';
 import { useToast } from '../context/ToastContext';
@@ -112,10 +112,10 @@ function MissingReason({ episodeId }) {
               onClick={async () => {
                 setApplying(true);
                 try {
-                  await updateSettings({
-                    path_sonarr_prefix: fix.sonarr_prefix,
-                    path_local_prefix: fix.local_prefix,
-                  });
+                  // Added as one more rule, not written over the existing
+                  // pair — a library split across several Sonarr roots needs
+                  // one rule per root.
+                  await addPathMapping(fix.sonarr_prefix, fix.local_prefix);
                   toast.success(t('sd_diag_fix_applied'));
                 } catch (e) {
                   toast.error(e?.response?.data?.detail || t('sd_diag_fix_failed'));
