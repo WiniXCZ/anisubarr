@@ -15,6 +15,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from . import job_log
+
 log = logging.getLogger("anisubarr.scheduler")
 
 _scheduler: BackgroundScheduler | None = None
@@ -202,6 +204,9 @@ def job_download_missing():
                 from ..services.subtitle_langcheck import check_and_fix_subtitle
                 check_and_fix_subtitle(db, sub)
                 log.info(f"[scheduler] ✅ S{ep.season_number:02d}E{ep.episode_number:02d} '{ep.series.title if ep.series else '?'}' → {save_path}")
+                if run_id:
+                    job_log.add_step(run_id, f"✓ {ep.series.title if ep.series else '?'} "
+                                             f"{ep_label} ← {_PROVIDER_LABELS.get(best['source'], best['source'])}")
                 series_search_log.setdefault(series_id, []).append({
                     "episode": ep_label,
                     "sources_tried": tried_sources,
@@ -229,6 +234,18 @@ def job_download_missing():
                     "status": "error",
                     "error": str(e),
                 })
+
+        if run_id:
+            all_entries = [e for entries in series_search_log.values() for e in entries]
+            done = sum(1 for e in all_entries if e["status"] == "downloaded")
+            missing = sum(1 for e in all_entries if e["status"] == "not_found")
+            errors = sum(1 for e in all_entries if e["status"] == "error")
+            job_log.update_message(
+                run_id,
+                f"{done} staženo, {missing} nenalezeno"
+                + (f", {errors} chyb" if errors else ""),
+                step=False,
+            )
 
         # Write per-series audit log entries summarizing this run's searches
         if series_search_log:
@@ -289,6 +306,7 @@ def job_nfo_refresh():
     from ..models.series import Series
     from ..services.nfo import write_all_nfo
 
+    run_id = job_log.current_run_id("nfo_refresh")
     db = SessionLocal()
     try:
         rows = db.query(Series).filter(Series.path.isnot(None)).all()
@@ -299,9 +317,17 @@ def job_nfo_refresh():
                 result = write_all_nfo(s)
                 ok_total   += result["ok_count"]
                 fail_total += result["fail_count"]
+                # Only failures are named — listing every series would bury them.
+                if run_id and result["fail_count"]:
+                    job_log.add_step(run_id, f"✗ {s.title}: {result['fail_count']} souborů selhalo")
             except Exception as e:
                 log.warning(f"[scheduler] NFO '{s.title}': {e}")
-        log.info(f"[scheduler] nfo_refresh done — {ok_total} OK, {fail_total} failed")
+                if run_id:
+                    job_log.add_step(run_id, f"✗ {s.title}: {str(e)[:80]}")
+        summary = f"{len(rows)} seriálů, {ok_total} souborů zapsáno, {fail_total} chyb"
+        if run_id:
+            job_log.update_message(run_id, summary, step=False)
+        log.info("[scheduler] nfo_refresh done — %s", summary)
     finally:
         db.close()
 
@@ -335,23 +361,59 @@ def job_subtitle_langcheck():
         db.close()
 
 
+_ACTION_LABEL = {
+    "promoted":      ("✅", "povýšeno"),
+    "published":     ("✅", "publikováno"),
+    "demoted":       ("⬇", "degradováno"),
+    "issue_flagged": ("⚠", "označen problém"),
+    "issue_cleared": ("✓", "problém vyřešen"),
+    "skipped_has_issue": ("⏭", "přeskočeno (issue v Seerr)"),
+    "error":         ("✗", "chyba"),
+}
+
+
+def _series_titles(db, ids) -> dict:
+    """id → title, so a run can say which show it touched instead of a bare count."""
+    from ..models.series import Series
+    ids = {i for i in ids if i}
+    if not ids:
+        return {}
+    return {row.id: row.title
+            for row in db.query(Series.id, Series.title).filter(Series.id.in_(ids)).all()}
+
+
+def _report(run_id, results, db) -> str:
+    """Write one step per affected series and return a one-line summary.
+
+    A scheduled run that only says "hotovo" leaves the interesting part — which
+    anime was promoted, which lost its subtitles — nowhere to be read.
+    """
+    titles = _series_titles(db, [r.get("series_id") for r in results])
+    counts: dict = {}
+    for r in results:
+        action = r.get("action", "")
+        icon, label = _ACTION_LABEL.get(action, ("·", action or "?"))
+        counts[label] = counts.get(label, 0) + 1
+        if run_id:
+            title = r.get("title") or titles.get(r.get("series_id")) or f"#{r.get('series_id')}"
+            reason = r.get("reason") or r.get("error") or ""
+            job_log.add_step(run_id, f"{icon} {label}: {title}" + (f" — {reason}" if reason else ""))
+    return ", ".join(f"{n}× {label}" for label, n in counts.items()) or "beze změn"
+
+
 def job_promotion_check():
     """Check all series for promotion eligibility and demote those with Seerr issues."""
     from ..database import SessionLocal
     from ..services.promotion import run_all_promotions
 
+    run_id = job_log.current_run_id("promotion_check")
     db = SessionLocal()
     try:
         results = run_all_promotions(db)
-        promoted = sum(1 for r in results if r.get("action") == "promoted")
-        demoted  = sum(1 for r in results if r.get("action") == "demoted")
-        flagged  = sum(1 for r in results if r.get("action") == "issue_flagged")
-        cleared  = sum(1 for r in results if r.get("action") == "issue_cleared")
-        log.info(
-            f"[scheduler] promotion_check done — "
-            f"{promoted} povýšeno, {demoted} degradováno, "
-            f"{flagged} označeno, {cleared} vyřešeno"
-        )
+        summary = _report(run_id, results, db)
+        if run_id:
+            job_log.update_message(run_id, summary, step=False)
+        log.info("[scheduler] promotion_check done — %s", summary)
     except Exception as e:
         log.error(f"[scheduler] promotion_check failed: {e}")
     finally:
@@ -388,11 +450,21 @@ def job_audit_check():
     from ..database import SessionLocal
     from ..services.audit import audit_all
 
+    run_id = job_log.current_run_id("audit_check")
     db = SessionLocal()
     try:
         results = audit_all(db)
-        changed = sum(1 for r in results if r.get("changed"))
-        log.info(f"[scheduler] audit_check done — {len(results)} seriálů, {changed} změn stavu")
+        changed = [r for r in results if r.get("changed")]
+        titles = _series_titles(db, [r.get("series_id") for r in changed])
+        if run_id:
+            for r in changed:
+                name = titles.get(r.get("series_id")) or f"#{r.get('series_id')}"
+                job_log.add_step(run_id, f"{name}: → {r.get('audit_status')} "
+                                         f"({r.get('audit_status_reason') or '—'})")
+        summary = f"{len(results)} seriálů, {len(changed)} změn stavu"
+        if run_id:
+            job_log.update_message(run_id, summary, step=False)
+        log.info("[scheduler] audit_check done — %s", summary)
     except Exception as e:
         log.error(f"[scheduler] audit_check failed: {e}")
     finally:
@@ -742,7 +814,9 @@ def _wrap(job_id: str, fn: Callable):
                 row.last_run_at = datetime.now(timezone.utc)
                 row.last_status = "ok"
                 db.commit()
-            job_log.finish_run(run, "done")
+            # Keep whatever the job reported as its last line — otherwise a
+            # scheduled run finishes as a bare name with no outcome at all.
+            job_log.finish_run(run, "done", job_log.get_message(run.run_id))
         except Exception as e:
             log.error(f"[scheduler] {job_id} failed: {e}")
             row = db.query(ScheduledJob).filter(ScheduledJob.job_id == job_id).first()

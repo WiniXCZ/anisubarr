@@ -290,10 +290,26 @@ def _full_sync_logged():
         log.warning("[sync] auto_promote_check_on_sync failed: %s", e)
 
 
+def _series_label(sonarr_id: int) -> str:
+    """Title of the series being synced — "Sync serie #298" tells nobody which
+    show that is."""
+    try:
+        from ..database import SessionLocal
+        from ..models.series import Series
+        db = SessionLocal()
+        try:
+            row = db.query(Series.title).filter(Series.sonarr_id == sonarr_id).first()
+            return row.title if row else f"série #{sonarr_id}"
+        finally:
+            db.close()
+    except Exception:
+        return f"série #{sonarr_id}"
+
+
 def _sync_series_logged(sonarr_id: int):
     """_sync_series obaleny job_log zaznamy."""
     from ..services import job_log
-    run = job_log.start_run("sonarr_sync_one", f"Sync serie #{sonarr_id}")
+    run = job_log.start_run("sonarr_sync_one", f"Sync: {_series_label(sonarr_id)}")
     try:
         _sync_series(sonarr_id)
         job_log.finish_run(run, "done")

@@ -194,16 +194,19 @@ def update_progress(run_id: str, current: int, total: int, message: str = "") ->
                 _live_messages[run_id] = message
 
 
-def update_message(run_id: str, message: str) -> None:
+def update_message(run_id: str, message: str, step: bool = True) -> None:
     """Update live progress message for a running job (in-memory only, no DB write).
 
     The message is also kept as a step, so the panel can show what the job did
-    just before, not only what it is doing this second.
+    just before, not only what it is doing this second. Pass step=False for a
+    closing summary — it becomes the run's message, and repeating it as the last
+    step would just be noise.
     """
     with _lock:
         if run_id in _running:
             _live_messages[run_id] = message
-            _append_step(run_id, message)
+            if step:
+                _append_step(run_id, message)
 
 
 def add_step(run_id: str, text: str) -> None:
@@ -223,6 +226,13 @@ def _append_step(run_id: str, text: str) -> None:
     if steps and steps[-1]["text"] == text:
         return
     steps.append({"ts": datetime.now(timezone.utc).isoformat(), "text": text})
+
+
+def get_message(run_id: str) -> str:
+    """The live message of a running job, so the wrapper can keep it as the
+    run's final summary instead of finishing with a blank line."""
+    with _lock:
+        return _live_messages.get(run_id, "")
 
 
 def get_steps(run_id: str) -> list[dict]:
