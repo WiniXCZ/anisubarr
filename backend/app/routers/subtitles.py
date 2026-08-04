@@ -1327,6 +1327,96 @@ def list_subtitle_files(
     return {"files_with_lang": files_with_lang, "languages": seen_langs}
 
 
+@router.get("/diagnose/{episode_id}")
+def diagnose_episode(
+    episode_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Why an episode is (or isn't) considered subtitled.
+
+    "Emby the subtitle sees, Anisubarr doesn't" has half a dozen possible
+    causes — an unmapped path, an unreadable mount, a file named after a
+    different release — and none of them are visible from a red "chybí" badge.
+    This lays out every step: the path Sonarr reported, what it resolves to
+    here, whether that folder can be read, which files are in it, and what the
+    database holds.
+    """
+    from ..utils import CS_LANGS, subtitle_languages
+
+    ep = _get_episode(db, episode_id)
+    out: dict = {
+        "episode": f"S{ep.season_number:02d}E{ep.episode_number:02d}",
+        "has_file": bool(ep.has_file),
+        "sonarr_path": ep.file_path,
+        "resolved_path": None,
+        "folder": None,
+        "folder_exists": False,
+        "folder_readable": False,
+        "expected_names": [],
+        "files_in_folder": [],
+        "db_subtitles": [
+            {"language": s.language, "source": s.source, "embedded": bool(s.is_embedded),
+             "path": s.file_path, "detected": s.detected_lang}
+            for s in ep.subtitles
+        ],
+        "embedded_in_video": ep.subtitles_in_file,
+        "languages": subtitle_languages(ep),
+    }
+
+    if not ep.file_path:
+        out["verdict"] = "epizoda nemá v Sonarru soubor — není u čeho titulek hledat"
+        return out
+
+    try:
+        resolved = path_resolver.unc_to_local(path_resolver.resolve(ep.file_path))
+    except Exception as exc:
+        out["verdict"] = f"cestu ze Sonarru nelze přeložit: {exc}"
+        return out
+
+    out["resolved_path"] = resolved
+    folder = os.path.dirname(resolved)
+    stem = os.path.splitext(os.path.basename(resolved))[0]
+    out["folder"] = folder
+    out["expected_names"] = [f"{stem}.{lang}.srt" for lang in sorted(CS_LANGS)]
+    out["folder_exists"] = os.path.isdir(folder)
+
+    if not out["folder_exists"]:
+        out["verdict"] = (
+            "složka s videem tu neexistuje — sedí mapování cest "
+            "(Nastavení → Síť: prefix Sonarru vs. lokální prefix)?"
+        )
+        return out
+
+    try:
+        names = sorted(os.listdir(folder))
+        out["folder_readable"] = True
+    except Exception as exc:
+        out["verdict"] = f"složku nelze přečíst: {exc}"
+        return out
+
+    subs = [n for n in names
+            if os.path.splitext(n)[1].lower() in (".srt", ".ass", ".ssa", ".vtt")]
+    out["files_in_folder"] = subs[:50]
+    out["video_present"] = os.path.basename(resolved) in names
+
+    if out["languages"]:
+        out["verdict"] = "titulky nalezeny"
+    elif subs:
+        out["verdict"] = (
+            "ve složce titulky jsou, ale žádný nesedí na název videa — "
+            f"očekává se '{stem}.cs.srt'"
+        )
+    elif not out["video_present"]:
+        out["verdict"] = (
+            "ve složce není ani samotné video — cesta ukazuje jinam, "
+            "než kde soubory opravdu leží"
+        )
+    else:
+        out["verdict"] = "u videa žádný titulkový soubor není"
+    return out
+
+
 class DeleteFileBody(BaseModel):
     file_path: str
 

@@ -10,7 +10,7 @@ from ..deps import get_current_user, require_admin
 from ..models.series import Series, Episode, Subtitle
 from ..models.user import User
 from ..services import path_resolver
-from ..utils import CS_LANGS, CS_NAMES, has_cs_sub
+from ..utils import CS_LANGS, CS_NAMES, has_cs_sub, subtitle_languages
 
 log = logging.getLogger("anisubarr.series")
 
@@ -466,6 +466,10 @@ def _episode_out(ep: Episode, dir_cache: dict[str, set[str]] | None = None) -> d
         "run_time":             ep.run_time,
         "release_group":        ep.release_group,
         "has_cs_sub":           has_cs_sub(ep, dir_cache),
+        # Which languages exist and where they come from — the row shows them
+        # as chips, so a subtitle on disk that the DB doesn't know about is
+        # visible instead of the episode just reading "missing".
+        "subtitles":            subtitle_languages(ep, dir_cache),
         "watched":              ep.watched or False,
     }
 

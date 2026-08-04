@@ -19,6 +19,21 @@ CS_NAMES: frozenset = CS_LANGS | frozenset(
 
 _SUB_EXTS = ("srt", "ass", "ssa", "vtt")
 
+# Three-letter (and full-word) forms folded onto the two-letter code, so one
+# language is one entry no matter which tool named the file.
+_LANG_ALIASES = {
+    "slo": "sk", "slk": "sk", "slovak": "sk", "slovensky": "sk",
+    "eng": "en", "english": "en",
+    "jpn": "ja", "jp": "ja", "japanese": "ja",
+    "ger": "de", "deu": "de", "german": "de",
+    "pol": "pl", "polish": "pl",
+    "fra": "fr", "fre": "fr", "french": "fr",
+    "spa": "es", "esp": "es", "spanish": "es",
+    "rus": "ru", "russian": "ru",
+    "hun": "hu", "ron": "ro", "rum": "ro",
+    "por": "pt", "ita": "it", "chi": "zh", "zho": "zh",
+}
+
 # has_cs_sub() can optionally probe the video file itself with ffprobe to detect
 # embedded Czech subtitle tracks Sonarr's mediaInfo missed. That spawns one
 # ffprobe process per distinct video file, which is far too expensive to run on
@@ -59,6 +74,86 @@ def _file_non_empty(path: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def _sidecar_languages(ep, dir_cache=None) -> dict[str, str]:
+    """{language code: file name} for subtitle files sitting next to the video.
+
+    Shares dir_cache with has_cs_sub(), so listing a season folder costs one
+    readdir per request no matter how many episodes are in it.
+    """
+    from ..services import path_resolver
+
+    found: dict[str, str] = {}
+    if not getattr(ep, "file_path", None):
+        return found
+    try:
+        unc_video = path_resolver.resolve(ep.file_path)
+        local_video = path_resolver.unc_to_local(unc_video)
+        directories = []
+        for vid in ([local_video] if local_video != unc_video else []) + [unc_video]:
+            d = os.path.dirname(vid)
+            if d and d not in directories:
+                directories.append(d)
+
+        stem = os.path.splitext(os.path.basename(local_video))[0].lower()
+        cache = dir_cache if dir_cache is not None else {}
+        for directory in directories:
+            if directory not in cache:
+                try:
+                    cache[directory] = ({f.lower(): f for f in os.listdir(directory)}
+                                        if os.path.isdir(directory) else {})
+                except Exception:
+                    cache[directory] = {}
+            for lower, actual in cache[directory].items():
+                if not isinstance(actual, str) or not lower.startswith(stem + "."):
+                    continue
+                name, ext = os.path.splitext(lower)
+                if ext.lstrip(".") not in _SUB_EXTS:
+                    continue
+                tag = name.rsplit(".", 1)[-1] if "." in name[len(stem):] else ""
+                # No tag at all means an untagged sidecar; still a subtitle.
+                code = tag if tag and tag.isalpha() and 2 <= len(tag) <= 3 else "?"
+                found.setdefault(code, actual)
+    except Exception:
+        pass
+    return found
+
+
+def subtitle_languages(ep, dir_cache=None) -> list[dict]:
+    """Every subtitle language known for an episode and where it came from.
+
+    Powers the per-episode language chips: seeing "CZ · na disku" is what makes
+    a subtitle that exists but isn't recorded in the database visible, instead
+    of the row just saying "missing" for reasons nobody can see.
+    """
+    langs: dict[str, set] = {}
+
+    def _add(code: str, source: str) -> None:
+        code = (code or "").strip().lower()
+        if not code:
+            return
+        # Sonarr reports three-letter codes, sidecar files usually two — without
+        # folding them together the same language shows up as two chips.
+        code = "cs" if code in CS_LANGS else _LANG_ALIASES.get(code, code)
+        langs.setdefault(code, set()).add(source)
+
+    for sub in getattr(ep, "subtitles", None) or []:
+        _add(sub.language, "embedded" if sub.is_embedded else "db")
+
+    for token in (getattr(ep, "subtitles_in_file", None) or "").replace("/", ",").split(","):
+        token = token.strip().lower()
+        if token:
+            _add("cs" if token in CS_NAMES else token, "embedded")
+
+    for code in _sidecar_languages(ep, dir_cache):
+        _add(code, "disk")
+
+    order = {"cs": 0, "sk": 1, "en": 2}
+    return [
+        {"lang": code, "sources": sorted(sources)}
+        for code, sources in sorted(langs.items(), key=lambda kv: (order.get(kv[0], 9), kv[0]))
+    ]
 
 
 def has_cs_sub(ep, dir_cache=None) -> bool:

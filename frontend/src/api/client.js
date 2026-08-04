@@ -120,6 +120,8 @@ export const getEpisodeSubFiles = (epId) => api.get(`/subtitles/files/episode/${
 // Ruční složka — where hand-downloaded subtitles are picked up from.
 export const getLocalSubFolder   = (report = false) =>
   api.get(`/subtitles/local-folder${report ? "?report=true" : ""}`);
+// Why an episode counts as missing — resolved path, folder contents, DB rows.
+export const diagnoseEpisodeSubs = (epId) => api.get(`/subtitles/diagnose/${epId}`);
 export const deleteDiskFile     = (path) => api.post("/subtitles/delete-file", { file_path: path });
 export const uploadSubtitle        = (formData) => api.post("/subtitles/upload", formData, {
   headers: { "Content-Type": "multipart/form-data" },

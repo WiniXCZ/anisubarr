@@ -197,3 +197,16 @@ def test_system_diag():
     body = r.json()
     assert body["database"]["exists"] is True
     assert isinstance(body["services"], list)
+
+
+def test_login_is_rate_limited():
+    """Brute-force protection: after ten attempts from one address the endpoint
+    stops answering. Worth pinning down — the suite clears this counter between
+    tests, so nothing else would notice if it stopped working."""
+    codes = [
+        client.post("/api/auth/token",
+                    data={"username": "nikdo", "password": "spatne"}).status_code
+        for _ in range(12)
+    ]
+    assert codes[0] == 401, "špatné heslo má vracet 401, ne 429"
+    assert 429 in codes, "přihlášení není omezené — brute force projde"

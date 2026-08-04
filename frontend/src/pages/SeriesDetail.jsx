@@ -10,6 +10,7 @@ import {
   downloadBest, deleteSubsByEpisodes, refreshSeriesNfo, getEmbySeriesUrl,
   getAiStatus, fetchEnglishTitle, syncOne, seerrReport,
   getAuditLog, getAuditStatus, runAuditCheck, scheduleBulkDownload,
+  diagnoseEpisodeSubs,
 } from '../api/client';
 import api from '../api/client';
 import { useToast } from '../context/ToastContext';
@@ -29,6 +30,133 @@ const NavIcon = ({ d, size = 15 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
     stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{d}</svg>
 );
+
+// ── Subtitle language chips (Bazarr-style) ───────────────────────────────────
+// One chip per language actually present, with where it came from. A single
+// "missing" badge hid the interesting case entirely: a subtitle sitting on the
+// disk that the database never recorded looked exactly like no subtitle at all.
+
+const LANG_LABEL = { cs: 'CZ', sk: 'SK', en: 'EN', ja: 'JA', pl: 'PL', de: 'DE', '?': '?' };
+
+function LangChips({ ep, compact }) {
+  const t = useT();
+  const subs = ep.subtitles || [];
+
+  if (!subs.length) {
+    return (
+      <span style={{
+        font: '700 10px JetBrains Mono', color: T.statusEnded,
+        background: `${T.statusEnded}1a`, border: `1px solid ${T.statusEnded}44`,
+        padding: '2px 7px', borderRadius: 4, whiteSpace: 'nowrap',
+      }}>× {t('sd_sub_missing')}</span>
+    );
+  }
+
+  const sourceLabel = {
+    db: t('sd_sub_src_db'), disk: t('sd_sub_src_disk'), embedded: t('sd_sub_src_embedded'),
+  };
+
+  return (
+    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+      {subs.map(s => {
+        const isCs = s.lang === 'cs';
+        const color = isCs ? T.statusDone : T.textMute;
+        const onlyEmbedded = s.sources.length === 1 && s.sources[0] === 'embedded';
+        return (
+          <span key={s.lang}
+            title={`${(s.sources || []).map(x => sourceLabel[x] || x).join(', ')}`}
+            style={{
+              font: '700 10px JetBrains Mono', color,
+              background: `${color}1a`,
+              border: `1px ${onlyEmbedded ? 'dashed' : 'solid'} ${color}55`,
+              padding: compact ? '1px 5px' : '2px 7px', borderRadius: 4, whiteSpace: 'nowrap',
+            }}>
+            {LANG_LABEL[s.lang] || s.lang.toUpperCase()}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Explains a missing subtitle instead of leaving a red badge to guess at. */
+function MissingReason({ episodeId }) {
+  const t = useT();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  if (data) {
+    return (
+      <div style={{ font: '400 11px JetBrains Mono', color: T.textMute, lineHeight: 1.6 }}>
+        <div style={{ color: T.textDim }}>{data.verdict}</div>
+        {data.folder && <div>{t('sd_diag_folder')}: {data.folder}</div>}
+        {data.files_in_folder?.length > 0 && (
+          <div>{t('sd_diag_found')}: {data.files_in_folder.slice(0, 6).join(', ')}</div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={async () => {
+        setLoading(true);
+        try { setData((await diagnoseEpisodeSubs(episodeId)).data); }
+        catch { setData({ verdict: t('sd_diag_failed') }); }
+        finally { setLoading(false); }
+      }}
+      style={{ ...btnGhost(T), padding: '3px 9px', fontSize: 11 }}>
+      {loading ? t('sd_diag_loading') : t('sd_why_missing')}
+    </button>
+  );
+}
+
+/** One season, foldable, with a summary you can read without opening it. */
+function SeasonGroup({ title, episodes, defaultOpen, children }) {
+  const t = useT();
+  const [open, setOpen] = useState(defaultOpen);
+  const withFile = episodes.filter(e => e.has_file).length;
+  const withCs = episodes.filter(e => e.has_cs_sub).length;
+  const complete = withFile > 0 && withCs === withFile;
+
+  return (
+    <div>
+      <div
+        onClick={() => setOpen(v => !v)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+          padding: '8px 12px', background: T.panel2,
+          border: `1px solid ${T.border}`,
+          borderRadius: open ? '10px 10px 0 0' : 10,
+          userSelect: 'none',
+        }}>
+        <span style={{ color: T.textDim, fontSize: 11, width: 10 }}>{open ? '▾' : '▸'}</span>
+        <span style={{ font: '700 12px JetBrains Mono', color: T.text, letterSpacing: '.06em' }}>
+          {title}
+        </span>
+        <span style={{ font: '500 11px JetBrains Mono', color: T.textMute }}>
+          {t('sd_season_eps').replace('{n}', episodes.length)}
+        </span>
+        <span style={{ flex: 1 }}/>
+        <span style={{
+          font: '700 10px JetBrains Mono',
+          color: complete ? T.statusDone : (withCs ? T.statusUpcoming : T.statusEnded),
+          background: `${complete ? T.statusDone : (withCs ? T.statusUpcoming : T.statusEnded)}1a`,
+          border: `1px solid ${complete ? T.statusDone : (withCs ? T.statusUpcoming : T.statusEnded)}44`,
+          padding: '2px 8px', borderRadius: 4, whiteSpace: 'nowrap',
+        }}>
+          {t('sd_season_cs_count').replace('{n}', withCs).replace('{total}', withFile || episodes.length)}
+        </span>
+      </div>
+      {open && (
+        <div style={{
+          background: T.panel, border: `1px solid ${T.border}`, borderTop: 'none',
+          borderRadius: '0 0 10px 10px', overflow: 'hidden',
+        }}>{children}</div>
+      )}
+    </div>
+  );
+}
 
 function epSubState(ep) {
   if (ep.has_cs_sub) return 'cs-only';
@@ -160,6 +288,12 @@ function EpisodeDetail({ ep, series, onSearchSubs, onClose, onPlay, onEdit }) {
             <span style={{ color:T.textDim }}>{t('sd_path_colon')} </span>{folder}
           </div>
         )}
+        {/* No subtitles found — say why instead of leaving a red badge to guess at */}
+        {!(ep.subtitles || []).length && ep.has_file && (
+          <div style={{ marginTop:8 }}>
+            <MissingReason episodeId={ep.id}/>
+          </div>
+        )}
       </div>
 
       {/* ── Akce ── */}
@@ -196,7 +330,6 @@ function EpisodeRow({ ep, series, last, selected, onSelect, onOpenSubs, onPlay, 
   const subStateMeta = getSubStateMeta(t);
   const sm = subStateMeta[subSt] || subStateMeta.none;
   const subColor = T[sm.colorKey];
-  const hue = strHue(series.title || '');
   const sizeGB = ep.file_size ? (ep.file_size / 1e9).toFixed(1) : null;
 
   const zebraBg = (index ?? 0) % 2 !== 0 ? 'rgba(255,255,255,0.025)' : 'transparent';
@@ -231,7 +364,7 @@ function EpisodeRow({ ep, series, last, selected, onSelect, onOpenSubs, onPlay, 
               {ep.title || `${t('sd_episode_prefix')} ${ep.episode_number}`}
             </div>
           </div>
-          <StatusPill theme={T} color={subColor} label={sm.icon} size="sm"/>
+          <LangChips ep={ep} compact/>
           <span style={{ color:T.textDim, fontSize:10 }}>{expanded ? '▲' : '▼'}</span>
         </div>
         {expanded && (
@@ -244,7 +377,7 @@ function EpisodeRow({ ep, series, last, selected, onSelect, onOpenSubs, onPlay, 
   return (
     <div style={{ borderBottom: last && !expanded ? 'none' : `1px solid ${T.border}` }}>
       <div
-        style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', cursor:'pointer', background:rowBg }}
+        style={{ display:'flex', alignItems:'center', gap:10, padding:'7px 14px', cursor:'pointer', background:rowBg }}
         onClick={onToggle}
       >
         {/* Checkbox */}
@@ -266,20 +399,6 @@ function EpisodeRow({ ep, series, last, selected, onSelect, onOpenSubs, onPlay, 
           </span>
         </div>
 
-        {/* Thumbnail */}
-        <div style={{flex:'0 0 80px', height:50, borderRadius:5, overflow:'hidden', position:'relative',
-          background:`linear-gradient(135deg, hsla(${hue},50%,28%,1), hsla(${(hue+30)%360},40%,15%,1))`,
-          border:`1px solid ${T.border}`}}>
-          <div style={{position:'absolute',right:3,top:3,padding:'1px 4px',
-            background:'rgba(0,0,0,0.55)',borderRadius:3,font:'700 8px JetBrains Mono',color:'#fff'}}>
-            {ep.duration || 24}m
-          </div>
-          {ep.watched && <div style={{position:'absolute',left:3,bottom:3,padding:'1px 4px',
-            background:'rgba(0,0,0,0.55)',borderRadius:3,font:'600 8px JetBrains Mono',color:T.statusDone}}>
-            ✓
-          </div>}
-        </div>
-
         {/* Title */}
         <div style={{flex:1, minWidth:0, overflow:'hidden'}}>
           <div style={{font:'600 13px "Space Grotesk"',color:T.text,
@@ -295,9 +414,9 @@ function EpisodeRow({ ep, series, last, selected, onSelect, onOpenSubs, onPlay, 
           </div>
         </div>
 
-        {/* Sub status */}
-        <div style={{flexShrink:0}}>
-          <StatusPill theme={T} color={subColor} label={`${sm.icon} ${sm.label}`} size="sm"/>
+        {/* Which subtitles this episode actually has */}
+        <div style={{flexShrink:0, maxWidth:190}}>
+          <LangChips ep={ep}/>
         </div>
 
         {/* Expand toggle */}
@@ -1966,82 +2085,46 @@ export default function SeriesDetail({ theme }) {
 
           {filteredEps.length > 0 ? (() => {
             const seasons = [...new Set(filteredEps.map(e => e.season_number))].sort((a, b) => a - b);
-            const isSpecialsView = epFilter === 'specials';
-            const multiSeason = seasons.length > 1;
-            const showHeaders = isSpecialsView || multiSeason;
-
-            if (!showHeaders) {
-              return (
-                <div style={{background:T.panel,border:`1px solid ${T.border}`,borderRadius:10,overflow:'hidden'}}>
-                  {filteredEps.map((ep, i) => {
-                    const epKey = ep.id || ep.episode_number;
-                    return (
-                      <EpisodeRow
-                        key={epKey} ep={ep} series={series}
-                        index={i}
-                        last={i === filteredEps.length - 1}
-                        selected={selectedEpIds.has(epKey)}
-                        onSelect={() => toggleEp(epKey)}
-                        onOpenSubs={() => setSubModalEp({
-                          id: ep.id,
-                          label: (() => { const t = ep.title || series.title_romaji || series.title || ''; return `EP ${String(ep.episode_number || 0).padStart(2,'0')} · ${t.length > 50 ? t.slice(0,50)+'…' : t}`; })(),
-                        })}
-                        onPlay={() => handlePlayEpisode(ep.id)}
-                        onEdit={() => navigate(`/player/${id}/${ep.id}`)}
-                        isMobile={isMobile}
-                        expanded={expandedEpId === epKey}
-                        onToggle={() => toggleExpand(epKey)}
-                      />
-                    );
-                  })}
-                </div>
-              );
-            }
-
             const bySeasonMap = {};
             for (const ep of filteredEps) {
-              const s = ep.season_number;
-              if (!bySeasonMap[s]) bySeasonMap[s] = [];
-              bySeasonMap[s].push(ep);
+              (bySeasonMap[ep.season_number] ||= []).push(ep);
             }
 
+            // Seasons fold like in Sonarr. With several of them only the newest
+            // opens — a 300-episode show is unreadable otherwise; a single
+            // season stays open because folding it would hide everything.
+            const newest = seasons[seasons.length - 1];
+
             return (
-              <div style={{display:'flex',flexDirection:'column',gap:16}}>
+              <div style={{display:'flex',flexDirection:'column',gap:10}}>
                 {seasons.map(seasonNum => {
                   const eps = bySeasonMap[seasonNum] || [];
                   const header = seasonNum === 0 ? t('sd_specials_label') : `${t('sd_season_prefix')} ${seasonNum}`;
                   return (
-                    <div key={seasonNum}>
-                      <div style={{
-                        font:'700 11px JetBrains Mono',color:T.textDim,
-                        letterSpacing:'.08em',marginBottom:8,textTransform:'uppercase',
-                      }}>
-                        {header}
-                      </div>
-                      <div style={{background:T.panel,border:`1px solid ${T.border}`,borderRadius:10,overflow:'hidden'}}>
-                        {eps.map((ep, i) => {
-                          const epKey = ep.id || ep.episode_number;
-                          return (
-                            <EpisodeRow
-                              key={epKey} ep={ep} series={series}
-                              index={i}
-                              last={i === eps.length - 1}
-                              selected={selectedEpIds.has(epKey)}
-                              onSelect={() => toggleEp(epKey)}
-                              onOpenSubs={() => setSubModalEp({
-                                id: ep.id,
-                                label: (() => { const t = ep.title || series.title_romaji || series.title || ''; return `S${String(seasonNum).padStart(2,'0')}E${String(ep.episode_number || 0).padStart(2,'0')} · ${t.length > 50 ? t.slice(0,50)+'…' : t}`; })(),
-                              })}
-                              onPlay={() => handlePlayEpisode(ep.id)}
-                              onEdit={() => navigate(`/player/${id}/${ep.id}`)}
-                              isMobile={isMobile}
-                              expanded={expandedEpId === epKey}
-                              onToggle={() => toggleExpand(epKey)}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
+                    <SeasonGroup key={seasonNum} title={header} episodes={eps}
+                      defaultOpen={seasons.length === 1 || seasonNum === newest}>
+                      {eps.map((ep, i) => {
+                        const epKey = ep.id || ep.episode_number;
+                        return (
+                          <EpisodeRow
+                            key={epKey} ep={ep} series={series}
+                            index={i}
+                            last={i === eps.length - 1}
+                            selected={selectedEpIds.has(epKey)}
+                            onSelect={() => toggleEp(epKey)}
+                            onOpenSubs={() => setSubModalEp({
+                              id: ep.id,
+                              label: (() => { const t = ep.title || series.title_romaji || series.title || ''; return `S${String(seasonNum).padStart(2,'0')}E${String(ep.episode_number || 0).padStart(2,'0')} · ${t.length > 50 ? t.slice(0,50)+'…' : t}`; })(),
+                            })}
+                            onPlay={() => handlePlayEpisode(ep.id)}
+                            onEdit={() => navigate(`/player/${id}/${ep.id}`)}
+                            isMobile={isMobile}
+                            expanded={expandedEpId === epKey}
+                            onToggle={() => toggleExpand(epKey)}
+                          />
+                        );
+                      })}
+                    </SeasonGroup>
                   );
                 })}
               </div>
