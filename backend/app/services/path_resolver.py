@@ -375,6 +375,33 @@ def ensure_smb(path: str) -> None:
                 log.warning(f"SMB: share mapping error for {local_prefix}: {exc}")
 
 
+class TargetFolderMissing(OSError):
+    """The folder a file was about to be written into isn't there.
+
+    Anisubarr never creates it. Everything it writes — subtitles, NFO — belongs
+    next to a video Sonarr already placed on the disk, so the folder existing is
+    the normal case and its absence means the path mapping points somewhere
+    else. Creating it would quietly grow an empty replica of Sonarr's tree in
+    the wrong place, which is how a share ends up with folders nobody made and
+    subtitles nothing can find. Failing loudly names the real problem instead.
+    """
+
+
+def require_folder(local_path: str) -> str:
+    """The directory ``local_path`` lives in, or a readable explanation."""
+    target = os.path.dirname(local_path)
+    if target and not os.path.isdir(target):
+        raise TargetFolderMissing(
+            f"Zápis selhal: složka neexistuje a Anisubarr ji nevytváří.\n"
+            f"Složka: {target}\n"
+            f"Sonarr ukládá titulky vedle videa, takže tahle složka existovat má. "
+            f"Když tu není, míří mapování cest jinam — zkontroluj Nastavení → Cesty, "
+            f"nebo u epizody klikni na „Proč chybí?“, kde Anisubarr správné "
+            f"mapování rovnou navrhne."
+        )
+    return target
+
+
 def subtitle_path_for(episode_path: str, language: str, ext: str) -> str:
     """
     Given a Sonarr episode path, return the drive-letter path for saving a subtitle.
@@ -391,6 +418,7 @@ def write_subtitle(dest_path: str, data: bytes) -> None:
     - Ensures SMB authentication and share mapping are in place.
     - Converts UNC to drive letter first (unc_to_local).
     - Clears read-only flag if the file already exists.
+    - Refuses to write into a folder that isn't there (see TargetFolderMissing).
     """
     import stat
 
@@ -398,23 +426,7 @@ def write_subtitle(dest_path: str, data: bytes) -> None:
     ensure_smb(dest_path)
 
     local_path = unc_to_local(dest_path)
-
-    # Ensure target directory exists (Sonarr already created it, but just in case)
-    target_dir = os.path.dirname(local_path)
-    if target_dir:
-        try:
-            os.makedirs(target_dir, exist_ok=True)
-        except Exception as mkdir_err:
-            log.warning(f"write_subtitle: makedirs({target_dir}) failed: {mkdir_err}")
-        # If makedirs failed AND directory still doesn't exist, fail early with a clear error
-        # instead of letting open() produce a confusing "No such file or directory"
-        if not os.path.isdir(target_dir):
-            raise PermissionError(
-                f"Zápis titulku selhal: cílová složka neexistuje a nelze ji vytvořit.\n"
-                f"Složka: {target_dir}\n"
-                f"Pravděpodobná příčina: Backend nemá oprávnění zápisu na síťový disk, "
-                f"nebo disk není dostupný. Ověř mapování disku (net use) a přístupová práva SMB."
-            )
+    target_dir = require_folder(local_path)
 
     # If the file already exists and is read-only, strip the flag before writing
     if os.path.isfile(local_path):

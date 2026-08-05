@@ -1640,8 +1640,10 @@ def _direct_download(url: str) -> bytes:
 def _save_subtitle(ep: Episode, data: bytes, language: str, ext: str) -> str:
     """Write subtitle bytes to disk next to the episode file. Returns save path.
 
-    When episode has no file_path (Sonarr hasn't matched the file yet), saves to
-    a fallback temp directory so the download is not blocked.
+    When Sonarr hasn't matched a video yet there is nowhere next to it to write,
+    so the file is parked in the manual folder instead — a real place the user
+    can open, and one the local provider scans, so the subtitle gets applied by
+    itself once the episode is imported.
     """
     if not data or len(data) < 10:
         raise HTTPException(400, "Stažený soubor titulku je prázdný — zkus jiný zdroj")
@@ -1650,14 +1652,18 @@ def _save_subtitle(ep: Episode, data: bytes, language: str, ext: str) -> str:
         dest = path_resolver.subtitle_path_for(ep.file_path, language, ext)
         try:
             path_resolver.write_subtitle(dest, data)
+        except path_resolver.TargetFolderMissing as e:
+            raise HTTPException(409, str(e))
         except PermissionError as e:
             raise HTTPException(403, str(e))
         except Exception as e:
             raise HTTPException(500, f"Chyba při ukládání titulku: {e}")
         return dest
 
-    # No file path yet — try series root, fall back to temp dir
-    import re as _re, tempfile as _tmp
+    # No file path yet. The season folder may still exist (Sonarr creates it
+    # ahead of the import), and next to the video is where the subtitle belongs,
+    # so that is worth one try — but only when the folder is already there.
+    import re as _re
     safe_title = _re.sub(r'[\\/:*?"<>|]', '_', ep.series.title or 'unknown')
     series_path = ep.series.path if ep.series else None
     if series_path:
@@ -1674,15 +1680,23 @@ def _save_subtitle(ep: Episode, data: bytes, language: str, ext: str) -> str:
             path_resolver.write_subtitle(dest, data)
             return dest
         except Exception:
-            pass  # fall through to temp-dir if series-path write fails
-    fallback_dir = os.path.join(_tmp.gettempdir(), "anisubarr_subs", safe_title)
-    os.makedirs(fallback_dir, exist_ok=True)
+            pass  # no folder there yet (or it's read-only) — park it instead
+
+    # Named the way the local provider matches on, so the next run picks it up.
+    pending_dir = local_subs.ensure_folder()
     dest = os.path.join(
-        fallback_dir,
-        f"S{ep.season_number:02d}E{ep.episode_number:02d}.{language}.{ext}",
+        pending_dir,
+        f"{safe_title} - S{ep.season_number:02d}E{ep.episode_number:02d}.{language}.{ext}",
     )
-    with open(dest, "wb") as f:
-        f.write(data)
+    try:
+        with open(dest, "wb") as f:
+            f.write(data)
+    except OSError as e:
+        raise HTTPException(
+            500,
+            f"Titulek nemá kam uložit: Sonarr u epizody zatím nemá soubor a do "
+            f"ruční složky ({pending_dir}) se zapsat nedá — {e}",
+        )
     return dest
 
 
