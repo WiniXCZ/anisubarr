@@ -27,6 +27,7 @@ import * as subOps from "../components/subtitle-editor/ops";
 // ── API helpers ──────────────────────────────────────────────────────────────
 
 const fetchSeriesDetail = (id) => api.get(`/series/${id}`).then(r => r.data);
+const fetchEpisodes     = (id) => api.get(`/series/${id}/episodes`).then(r => r.data);
 const fetchEpSubs       = (id) => api.get(`/subtitles/episode/${id}`).then(r => r.data);
 const fetchSubLines     = (eid, lang) => api.get(`/episodes/${eid}/subs/${lang}`).then(r => r.data);
 const fetchMarkers      = (eid) => api.get(`/episodes/${eid}/markers`).then(r => r.data);
@@ -201,7 +202,18 @@ export default function PlayerPage() {
     staleTime: 60_000,
   });
 
-  const episode = series?.episodes?.find((e) => String(e.id) === String(episodeId));
+  // The episode has to come from its own endpoint: /series/{id} answers with
+  // counts and artwork, never with an episode list, so looking one up inside it
+  // silently found nothing — and an episode that is "missing" reads exactly like
+  // one with no video file, which is what this page then showed for every
+  // episode ever opened.
+  const { data: episodes = [] } = useQuery({
+    queryKey: ["episodes", seriesId],
+    queryFn: () => fetchEpisodes(seriesId),
+    staleTime: 60_000,
+  });
+
+  const episode = episodes.find((e) => String(e.id) === String(episodeId));
 
   const { data: subs = [] } = useQuery({
     queryKey: ["subs", episodeId],
@@ -276,9 +288,11 @@ export default function PlayerPage() {
 
   useEffect(() => {
     function onKey(e) {
-      const video = videoRef.current;
-      if (!video) return;
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+
+      // Editing shortcuts first, and without touching the video: subtitles get
+      // fixed by hand exactly when the video isn't playable, and an undo that
+      // quietly does nothing there is worse than no shortcut at all.
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         e.shiftKey ? redo() : undo();
@@ -292,6 +306,9 @@ export default function PlayerPage() {
         return;
       }
       if (e.ctrlKey || e.metaKey) return;   // leave Ctrl+C and friends alone
+
+      const video = videoRef.current;
+      if (!video) return;                   // playback shortcuts need one
       switch (e.key) {
         case " ":
           e.preventDefault();
