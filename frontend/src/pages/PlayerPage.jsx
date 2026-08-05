@@ -2,18 +2,27 @@
  * PlayerPage – /player/:seriesId/:episodeId
  *
  * Layout: video player (2/3) + subtitle editor panel (1/3)
- * Keyboard shortcuts: Space play/pause · ←/→ ±5s · J/L ±10s · F fullscreen
+ * Keyboard shortcuts: Space play/pause · ←/→ ±5s · J/L ±10s · F fullscreen ·
+ * Ctrl+Z undo · Ctrl+Shift+Z redo
+ *
+ * The editor is here rather than on a page of its own because timing is judged
+ * against the picture: "is this line late" is a question only the video can
+ * answer, and every editing operation that matters takes the playhead as input.
  */
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, Play, Pause, Volume2, VolumeX, Maximize, Minimize,
-  SkipBack, SkipForward, Scissors, Save, Loader2, Pencil, X, RefreshCw,
+  SkipBack, SkipForward, Scissors, Loader2, X,
 } from "lucide-react";
 import api from "../api/client";
 import clsx from "clsx";
 import { useT } from "../i18n/I18nContext";
+import CueRow from "../components/subtitle-editor/CueRow";
+import EditorToolbar from "../components/subtitle-editor/EditorToolbar";
+import useCueHistory from "../components/subtitle-editor/useCueHistory";
+import * as subOps from "../components/subtitle-editor/ops";
 
 // ── API helpers ──────────────────────────────────────────────────────────────
 
@@ -38,15 +47,6 @@ function fmtTime(secs) {
   return h > 0
     ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
     : `${m}:${String(sec).padStart(2, "0")}`;
-}
-
-function fmtTs(secs) {
-  const s = Math.floor(secs || 0);
-  const ms = Math.round(((secs || 0) - s) * 1000);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
 }
 
 // ── Timeline ─────────────────────────────────────────────────────────────────
@@ -123,78 +123,6 @@ function Timeline({ currentTime, duration, markers, onSeek }) {
   );
 }
 
-// ── CueRow ────────────────────────────────────────────────────────────────────
-
-function CueRow({ cue, idx, active, onSeek, onSync, onSyncEnd, onEdit }) {
-  const t = useT();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(cue.text);
-
-  useEffect(() => { setDraft(cue.text); }, [cue.text]);
-
-  return (
-    <div
-      data-cue={idx}
-      className={clsx(
-        "group flex flex-col gap-0.5 px-3 py-2 border-b border-border cursor-pointer transition-colors",
-        active
-          ? "bg-accent/10 border-l-2 border-l-accent"
-          : "hover:bg-white/[0.025]",
-      )}
-      onClick={() => !editing && onSeek(cue.start)}
-    >
-      <div className="flex items-center gap-1.5">
-        <span className="text-[10px] font-mono text-muted/50 w-5 flex-shrink-0">{idx + 1}</span>
-        <span className="flex-1 text-[10px] font-mono text-muted/60 truncate">
-          {fmtTs(cue.start)} → {fmtTs(cue.end)}
-        </span>
-        <button
-          onClick={(e) => { e.stopPropagation(); onSync(idx); }}
-          className="text-[10px] px-1.5 py-0.5 rounded bg-bg border border-border hover:border-accent text-muted hover:text-accent transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0"
-          title={t('player_set_start_title')}
-        >
-          ▶start
-        </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); onSyncEnd(idx); }}
-          className="text-[10px] px-1.5 py-0.5 rounded bg-bg border border-border hover:border-accent text-muted hover:text-accent transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0"
-          title={t('player_set_end_title')}
-        >
-          end◀
-        </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); setEditing((v) => !v); setDraft(cue.text); }}
-          className="p-0.5 rounded text-muted hover:text-accent opacity-0 group-hover:opacity-100 flex-shrink-0 transition-colors"
-          title={t('player_edit_text_title')}
-        >
-          <Pencil size={10} />
-        </button>
-      </div>
-
-      {editing ? (
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onEdit(idx, draft); setEditing(false); }
-            if (e.key === "Escape") { setEditing(false); setDraft(cue.text); }
-          }}
-          onClick={(e) => e.stopPropagation()}
-          rows={Math.max(1, (draft.match(/\n/g) || []).length + 1)}
-          className="ml-7 w-full bg-bg border border-accent rounded px-2 py-1 text-xs text-text resize-none focus:outline-none"
-          autoFocus
-        />
-      ) : (
-        <p className="ml-7 text-sm text-text/90 leading-snug whitespace-pre-wrap">
-          {cue.text
-            ? cue.text
-            : <em className="text-muted/40 text-xs">{t('player_empty_cue')}</em>}
-        </p>
-      )}
-    </div>
-  );
-}
-
 // ── MarkerBtn ─────────────────────────────────────────────────────────────────
 
 function MarkerBtn({ label, color, value, onSet, disabled }) {
@@ -241,10 +169,12 @@ export default function PlayerPage() {
 
   // Subtitle editor state
   const [selectedLang, setSelectedLang] = useState("cs");
-  const [cues,         setCues]         = useState([]);
+  const { cues, commit, reset, undo, redo, canUndo, canRedo } = useCueHistory([]);
   const [subFormat,    setSubFormat]    = useState("srt");
   const [dirty,        setDirty]        = useState(false);
   const [saveMsg,      setSaveMsg]      = useState(null);
+  const [selected,     setSelected]     = useState([]);   // indexes ticked in the list
+  const [analysis,     setAnalysis]     = useState(null);
 
   // Markers
   const [markers, setMarkers] = useState({});
@@ -255,9 +185,6 @@ export default function PlayerPage() {
   const [cutTo,   setCutTo]   = useState(0);
   const [cutMsg,  setCutMsg]  = useState("");
 
-  // Shift + alass panel
-  const [shiftMs,    setShiftMs]    = useState(0);
-  const [shiftInput, setShiftInput] = useState("0");
   const [editorMsg,  setEditorMsg]  = useState(null); // {ok: bool, text: string}
 
   // Video URL with token for <video src>
@@ -299,12 +226,23 @@ export default function PlayerPage() {
 
   useEffect(() => {
     if (subData) {
-      setCues(subData.lines || []);
+      reset(subData.lines || []);
       setSubFormat(subData.format || "srt");
       setDirty(false);
       setSaveMsg(null);
+      setSelected([]);
     }
-  }, [subData]);
+  }, [subData]); // eslint-disable-line
+
+  // Re-check the file after edits settle. Doing it per keystroke would be a
+  // request per character; a beat later the warnings are still current.
+  useEffect(() => {
+    if (cues.length === 0) { setAnalysis(null); return; }
+    const timer = setTimeout(() => {
+      subOps.analyze(cues).then(setAnalysis).catch(() => {});
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [cues]);
 
   useEffect(() => {
     if (markersData) {
@@ -341,6 +279,19 @@ export default function PlayerPage() {
       const video = videoRef.current;
       if (!video) return;
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        e.shiftKey ? redo() : undo();
+        setDirty(true);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+        setDirty(true);
+        return;
+      }
+      if (e.ctrlKey || e.metaKey) return;   // leave Ctrl+C and friends alone
       switch (e.key) {
         case " ":
           e.preventDefault();
@@ -369,7 +320,7 @@ export default function PlayerPage() {
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, []);
+  }, [undo, redo]);
 
   useEffect(() => {
     const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
@@ -405,19 +356,6 @@ export default function PlayerPage() {
     onError:   (e)   => setCutMsg(`✗ ${e?.response?.data?.detail || t('disc_toast_error_prefix')}`),
   });
 
-  const shiftMut = useMutation({
-    mutationFn: () => api.post("/subtitle-editor/shift", { sub_id: subId, shift_ms: shiftMs, save: true }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["sub-lines", episodeId, selectedLang] });
-      setEditorMsg({ ok: true, text: `${t('player_shifted_prefix')} ${shiftMs > 0 ? "+" : ""}${shiftMs} ${t('player_shifted_suffix')}` });
-      setTimeout(() => setEditorMsg(null), 3000);
-    },
-    onError: (e) => {
-      setEditorMsg({ ok: false, text: `${t('player_shift_error_prefix')} ${e?.response?.data?.detail || e.message}` });
-      setTimeout(() => setEditorMsg(null), 5000);
-    },
-  });
-
   const alasMut = useMutation({
     mutationFn: () => api.post(`/subtitle-sync/episode/${episodeId}`),
     onSuccess: (res) => {
@@ -446,24 +384,63 @@ export default function PlayerPage() {
     setMarkerMut.mutate({ type, time_seconds: t });
   }
 
-  function updateCue(idx, changes) {
-    setCues((prev) => prev.map((c, i) => (i === idx ? { ...c, ...changes } : c)));
+  /** Edit one cue. Typing in the same cue coalesces into one undo step. */
+  function updateCue(idx, changes, coalesceKey = null) {
+    commit((prev) => prev.map((c, i) => (i === idx ? { ...c, ...changes } : c)),
+           coalesceKey ?? `cue-${idx}-${Object.keys(changes).join()}`);
     setDirty(true);
   }
 
+  /** Replace the whole list — what the toolbar operations return. */
+  function replaceCues(lines) {
+    commit(lines);
+    setDirty(true);
+    setSelected([]);
+  }
+
   function syncCueToCurrentTime(idx) {
-    const t = videoRef.current?.currentTime;
-    if (t == null) return;
+    const now = videoRef.current?.currentTime;
+    if (now == null) return;
     const cue = cues[idx];
     const dur = Math.max(cue.end - cue.start, 0.1);
-    updateCue(idx, { start: t, end: t + dur });
+    updateCue(idx, { start: now, end: now + dur });
   }
 
   function syncCueEndToCurrentTime(idx) {
-    const t = videoRef.current?.currentTime;
-    if (t == null) return;
+    const now = videoRef.current?.currentTime;
+    if (now == null) return;
     const cue = cues[idx];
-    updateCue(idx, { end: Math.max(t, cue.start + 0.1) });
+    updateCue(idx, { end: Math.max(now, cue.start + 0.1) });
+  }
+
+  /** The cue-list operations. They run on the backend so the editor and the
+   *  tests agree on what "split" or "merge" means. */
+  async function runOp(fn) {
+    try {
+      const res = await fn();
+      replaceCues(res.lines);
+    } catch (e) {
+      setEditorMsg({ ok: false, text: e?.response?.data?.detail || e.message });
+      setTimeout(() => setEditorMsg(null), 5000);
+    }
+  }
+
+  /** Split where the playhead sits when it's inside the cue, else in half. */
+  const splitCue = (idx) => runOp(() => {
+    const now = videoRef.current?.currentTime;
+    const cue = cues[idx];
+    const inside = now != null && now > cue.start && now < cue.end;
+    return subOps.splitCue(cues, idx, inside ? now : null);
+  });
+
+  const deleteCue = (idx) => runOp(() => subOps.deleteCues(cues, [idx]));
+  const mergeWithNext = (idx) => runOp(() => subOps.mergeCues(cues, [idx, idx + 1]));
+
+  /** A new cue starts at the playhead and runs for a readable two seconds. */
+  const insertCue = (at) => runOp(() => subOps.insertCue(cues, at, at + 2, ""));
+
+  function toggleSelected(idx, on) {
+    setSelected((prev) => (on ? [...prev, idx] : prev.filter((i) => i !== idx)).sort((a, b) => a - b));
   }
 
   // ── Derived values ────────────────────────────────────────────
@@ -478,8 +455,8 @@ export default function PlayerPage() {
 
   const canSave = dirty && subFormat === "srt";
 
-  // sub_id for the selected language (used by shift + alass)
-  const subId = subs.find((s) => s.language === selectedLang && !s.is_embedded && s.file_path)?.id ?? null;
+  // The verdict for each row, keyed by index the way analyze() reports it.
+  const issuesByIndex = useMemo(() => analysis?.issues || {}, [analysis]);
 
   // ── Render ────────────────────────────────────────────────────
 
@@ -509,15 +486,10 @@ export default function PlayerPage() {
             {saveMsg.text}
           </span>
         )}
-        {canSave && (
-          <button
-            onClick={() => saveMut.mutate()}
-            disabled={saveMut.isPending}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-accent hover:bg-accent/80 text-white rounded-lg disabled:opacity-40 transition-colors flex-shrink-0"
-          >
-            {saveMut.isPending ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-            {t('player_save_subs')}
-          </button>
+        {dirty && !saveMsg && (
+          <span className="text-xs px-2 py-1 rounded text-yellow-400 bg-yellow-900/20 flex-shrink-0">
+            {t('sube_unsaved')}
+          </span>
         )}
       </div>
 
@@ -557,7 +529,7 @@ export default function PlayerPage() {
             )}
 
             {/* Subtitle overlay */}
-            {activeCue >= 0 && cues[activeCue] && (
+            {activeCue >= 0 && cues[activeCue]?.text && (
               <div className="absolute bottom-3 left-0 right-0 flex justify-center pointer-events-none px-8 z-10">
                 <div
                   className="text-white text-center text-lg font-semibold px-4 py-1.5 rounded leading-snug"
@@ -716,7 +688,7 @@ export default function PlayerPage() {
         {/* ── Subtitle editor panel (1/3) ─────────────────────── */}
         <div
           className="flex flex-col border-l border-border bg-panel overflow-hidden"
-          style={{ width: "33%", minWidth: "260px", maxWidth: "420px" }}
+          style={{ width: "38%", minWidth: "320px", maxWidth: "520px" }}
         >
           {/* Lang tabs */}
           <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 border-b border-border">
@@ -745,69 +717,34 @@ export default function PlayerPage() {
             )}
           </div>
 
-          {/* ── Shift + alass panel ──────────────────────────── */}
-          <div className="flex-shrink-0 border-b border-border px-3 py-2 flex flex-col gap-1.5">
-            {/* Row 1: input + quick shift buttons */}
-            <div className="flex items-center gap-1 flex-wrap">
-              <span className="text-[10px] text-muted/50 font-semibold uppercase tracking-wide flex-shrink-0 mr-0.5">{t('player_shift_label')}</span>
-              <input
-                type="number"
-                value={shiftInput}
-                onChange={(e) => { setShiftInput(e.target.value); setShiftMs(Number(e.target.value) || 0); }}
-                className="w-16 bg-bg border border-border rounded px-1.5 py-0.5 text-xs text-text text-center font-mono focus:outline-none focus:border-accent flex-shrink-0"
-                placeholder="ms"
-              />
-              <span className="text-[10px] text-muted/50 flex-shrink-0">ms</span>
-              {[-5000, -1000, -500, -100, 100, 500, 1000, 5000].map((ms) => (
-                <button
-                  key={ms}
-                  onClick={() => { setShiftMs(ms); setShiftInput(String(ms)); }}
-                  className={clsx(
-                    "text-[10px] px-1 py-0.5 rounded border transition-colors flex-shrink-0 font-mono",
-                    shiftMs === ms
-                      ? "bg-accent/20 border-accent text-accent"
-                      : "border-border text-muted/60 hover:border-accent hover:text-text",
-                  )}
-                >
-                  {ms > 0 ? `+${Math.abs(ms) >= 1000 ? `${ms / 1000}s` : ms}` : `${ms <= -1000 ? `${ms / 1000}s` : ms}`}
-                </button>
-              ))}
-            </div>
+          <EditorToolbar
+            cues={cues}
+            onCues={replaceCues}
+            currentTime={currentTime}
+            analysis={analysis}
+            dirty={canSave}
+            saving={saveMut.isPending}
+            onSave={() => saveMut.mutate()}
+            onUndo={() => { undo(); setDirty(true); }}
+            onRedo={() => { redo(); setDirty(true); }}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            selection={{ first: selected[0] ?? null, all: selected }}
+            onInsert={insertCue}
+            onAutoSync={() => alasMut.mutate()}
+            autoSyncing={alasMut.isPending}
+            canAutoSync={!!episode?.has_file}
+          />
 
-            {/* Row 2: apply + alass */}
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => shiftMut.mutate()}
-                disabled={shiftMs === 0 || shiftMut.isPending || !subId}
-                className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-border bg-surface text-muted hover:border-accent hover:text-text disabled:opacity-40 transition-colors"
-                title={!subId ? t('player_no_sub_file_selected') : t('player_apply_shift_title')}
-              >
-                {shiftMut.isPending ? <Loader2 size={9} className="animate-spin" /> : null}
-                {t('player_apply_shift')}
-              </button>
-              <button
-                onClick={() => alasMut.mutate()}
-                disabled={alasMut.isPending || !episode?.has_file}
-                className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-border bg-surface text-muted hover:border-accent hover:text-text disabled:opacity-40 transition-colors ml-auto"
-                title={t('player_alass_sync_title')}
-              >
-                {alasMut.isPending
-                  ? <Loader2 size={9} className="animate-spin" />
-                  : <RefreshCw size={9} />}
-                {alasMut.isPending ? t('player_syncing') : t('player_alass_sync_btn')}
-              </button>
+          {/* Editor feedback */}
+          {editorMsg && (
+            <div className={clsx(
+              "flex-shrink-0 mx-2 mb-1 text-[10px] px-2 py-1 rounded",
+              editorMsg.ok ? "text-green-400 bg-green-900/20" : "text-red-400 bg-red-900/20",
+            )}>
+              {editorMsg.text}
             </div>
-
-            {/* Editor feedback */}
-            {editorMsg && (
-              <div className={clsx(
-                "text-[10px] px-2 py-1 rounded",
-                editorMsg.ok ? "text-green-400 bg-green-900/20" : "text-red-400 bg-red-900/20",
-              )}>
-                {editorMsg.text}
-              </div>
-            )}
-          </div>
+          )}
 
           {/* Cue list */}
           <div ref={cueListRef} className="flex-1 overflow-y-auto min-h-0">
@@ -824,10 +761,18 @@ export default function PlayerPage() {
                 cue={cue}
                 idx={i}
                 active={activeCue === i}
+                selected={selected.includes(i)}
+                issues={issuesByIndex[String(i)]}
+                cps={analysis?.cps?.[i]}
                 onSeek={seekTo}
-                onSync={syncCueToCurrentTime}
-                onSyncEnd={syncCueEndToCurrentTime}
-                onEdit={(idx, text) => updateCue(idx, { text })}
+                onSelect={toggleSelected}
+                onChange={(changes) => updateCue(i, changes)}
+                onSetStart={syncCueToCurrentTime}
+                onSetEnd={syncCueEndToCurrentTime}
+                onSplit={splitCue}
+                onDelete={deleteCue}
+                onMergeNext={mergeWithNext}
+                canMergeNext={i < cues.length - 1}
               />
             ))}
           </div>

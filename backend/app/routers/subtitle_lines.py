@@ -59,8 +59,11 @@ def _parse_srt(content: str) -> list[dict]:
 
 def _render_srt(lines: list[dict]) -> str:
     out = []
-    for ln in sorted(lines, key=lambda x: x["start"]):
-        out.append(str(ln["id"]))
+    # Numbered by position, not by the id the cue arrived with: after an edit
+    # moves a line in time, keeping the old number would write an SRT whose
+    # blocks count backwards.
+    for i, ln in enumerate(sorted(lines, key=lambda x: x["start"]), start=1):
+        out.append(str(i))
         out.append(f"{_s_to_ts(ln['start'])} --> {_s_to_ts(ln['end'])}")
         out.append(ln.get("text", ""))
         out.append("")

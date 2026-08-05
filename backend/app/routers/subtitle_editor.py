@@ -3,10 +3,16 @@ subtitle_editor.py – Read, shift, and save subtitle files manually.
 
 The shift is always applied to the raw SRT/ASS file content — no audio analysis,
 no automatic detection. Pure manual offset in milliseconds.
+
+The ``/ops`` endpoints below are the editing operations proper (see
+``services/subtitle_ops.py``). They take a cue list and give one back without
+touching the disk, so the editor can preview a change, undo it, and save once —
+a round trip per keystroke would be both slow and impossible to undo.
 """
 from __future__ import annotations
 import os
 import re
+from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -15,7 +21,7 @@ from ..database import get_db
 from ..deps import get_current_user
 from ..models.series import Subtitle
 from ..models.user import User
-from ..services import path_resolver
+from ..services import path_resolver, subtitle_ops
 
 router = APIRouter(prefix="/api/subtitle-editor", tags=["subtitle-editor"])
 
@@ -203,3 +209,117 @@ def save_subtitle(
         raise HTTPException(500, str(e))
 
     return {"sub_id": sub.id, "saved": True}
+
+
+# ── Editing operations ─────────────────────────────────────────────────────────
+
+class _Cues(BaseModel):
+    lines: list[dict[str, Any]]
+
+
+class FixRequest(_Cues):
+    rules: list[str] | None = None      # None = every rule
+
+
+class ShiftLinesRequest(_Cues):
+    seconds: float
+    from_index: int = 0                 # >0 shifts only the tail
+
+
+class ScaleRequest(_Cues):
+    factor: float
+    anchor: float = 0.0
+
+
+class SyncPointsRequest(_Cues):
+    first: tuple[float, float]          # (time in the subtitle, time in the video)
+    second: tuple[float, float]
+
+
+class ReplaceRequest(_Cues):
+    find: str
+    replace: str = ""
+    regex: bool = False
+    case_sensitive: bool = True
+
+
+class SplitRequest(_Cues):
+    index: int
+    at: float | None = None             # None = down the middle
+
+
+class MergeRequest(_Cues):
+    indexes: list[int]
+
+
+class InsertRequest(_Cues):
+    start: float
+    end: float
+    text: str = ""
+
+
+class DeleteRequest(_Cues):
+    indexes: list[int]
+
+
+ops = APIRouter(prefix="/api/subtitle-editor/ops", tags=["subtitle-editor"],
+                dependencies=[Depends(get_current_user)])
+
+
+def _guard(fn, *args, **kwargs):
+    """A rejected edit is the user's mistake to correct, not a server fault."""
+    try:
+        return fn(*args, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@ops.post("/analyze")
+def op_analyze(body: _Cues):
+    return subtitle_ops.analyze(body.lines)
+
+
+@ops.post("/fix")
+def op_fix(body: FixRequest):
+    return _guard(subtitle_ops.fix, body.lines, body.rules)
+
+
+@ops.post("/shift")
+def op_shift(body: ShiftLinesRequest):
+    return {"lines": _guard(subtitle_ops.shift, body.lines, body.seconds, body.from_index)}
+
+
+@ops.post("/scale")
+def op_scale(body: ScaleRequest):
+    return {"lines": _guard(subtitle_ops.scale, body.lines, body.factor, body.anchor)}
+
+
+@ops.post("/sync-points")
+def op_sync_points(body: SyncPointsRequest):
+    return {"lines": _guard(subtitle_ops.sync_two_points, body.lines, body.first, body.second)}
+
+
+@ops.post("/replace")
+def op_replace(body: ReplaceRequest):
+    return _guard(subtitle_ops.replace, body.lines, body.find, body.replace,
+                  regex=body.regex, case_sensitive=body.case_sensitive)
+
+
+@ops.post("/split")
+def op_split(body: SplitRequest):
+    return {"lines": _guard(subtitle_ops.split_cue, body.lines, body.index, body.at)}
+
+
+@ops.post("/merge")
+def op_merge(body: MergeRequest):
+    return {"lines": _guard(subtitle_ops.merge_cues, body.lines, body.indexes)}
+
+
+@ops.post("/insert")
+def op_insert(body: InsertRequest):
+    return {"lines": _guard(subtitle_ops.insert_cue, body.lines, body.start, body.end, body.text)}
+
+
+@ops.post("/delete")
+def op_delete(body: DeleteRequest):
+    return {"lines": _guard(subtitle_ops.delete_cues, body.lines, body.indexes)}
