@@ -61,10 +61,11 @@ def test_fix_returns_the_cues_and_what_it_did(auth):
     assert body["lines"][0]["end"] < body["lines"][1]["start"]
 
 
-def test_every_rule_runs_when_none_are_named(auth):
+def test_the_safe_rules_run_when_none_are_named(auth):
     body = client.post("/api/subtitle-editor/ops/fix", headers=auth,
                        json={"lines": _LINES}).json()
-    assert body["report"]
+    assert body["report"]["overlap"] == 1
+    assert "tags" not in body["report"]
 
 
 def test_two_point_sync_over_http(auth):

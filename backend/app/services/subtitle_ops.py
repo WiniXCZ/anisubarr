@@ -87,7 +87,11 @@ def analyze(lines: list[dict]) -> dict:
         if end <= start:
             flag(i, "negative")
         else:
-            if end - start < MIN_DURATION:
+            # The fixer must leave a frame's gap before the next cue, so a line
+            # it lengthened as far as it could sits a hair under the minimum.
+            # Demanding the full second here would leave a warning that pressing
+            # "fix" can never clear — the tolerance keeps the two in agreement.
+            if end - start < MIN_DURATION - FRAME_GAP:
                 flag(i, "short")
             if end - start > MAX_DURATION:
                 flag(i, "long")
@@ -116,16 +120,20 @@ def analyze(lines: list[dict]) -> dict:
 ALL_RULES = ("order", "empty", "spaces", "tags", "duplicates",
              "overlap", "min_duration", "max_duration")
 
+# Everything except ``tags``. Dropping an empty cue is uncontroversial; throwing
+# away every ``<i>`` in the file is a decision. Asking for "the usual repairs"
+# must not quietly include the one that loses somebody's italics, so omitting
+# the rule list runs this set and not all of them.
+SAFE_RULES = tuple(r for r in ALL_RULES if r != "tags")
+
 
 def fix(lines: list[dict], rules: list[str] | None = None) -> dict:
     """Apply the named repairs. Returns the new cues and what each rule changed.
 
-    Rules are opt-in and reported separately because they are not equally safe:
-    dropping empty cues is uncontroversial, stripping ``<i>`` throws away
-    styling somebody may have wanted. Nobody should have to diff a 400-line file
-    to find out what a "fix everything" button did.
+    Rules are named and reported separately because they are not equally safe.
+    Nobody should have to diff a 400-line file to find out what a "fix" did.
     """
-    chosen = [r for r in (rules if rules is not None else ALL_RULES) if r in ALL_RULES]
+    chosen = [r for r in (rules if rules is not None else SAFE_RULES) if r in ALL_RULES]
     cues = [dict(c) for c in lines]
     report = {r: 0 for r in chosen}
 
