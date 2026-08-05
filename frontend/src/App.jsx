@@ -15,7 +15,7 @@ import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 import AdminUsers from "./pages/AdminUsers";
 import Requests from "./pages/Requests";
-import SubtitleEditorComingSoon from "./pages/SubtitleEditorComingSoon";
+import SubtitleEditorPage from "./pages/SubtitleEditorPage";
 import PlayerPage from "./pages/PlayerPage";
 import Discover from "./pages/Discover";
 import Navbar from "./components/Navbar";
@@ -80,7 +80,7 @@ export default function App() {
                     <Route path="/files"      element={<Files />} />
                     <Route path="/users"      element={<Users />} />
                     <Route path="/settings"   element={<Settings />} />
-                    <Route path="/subtitles"  element={<SubtitleEditorComingSoon />} />
+                    <Route path="/subtitles"  element={<SubtitleEditorPage />} />
                     <Route path="/player/:seriesId/:episodeId" element={<PlayerPage />} />
                     <Route path="/discover"    element={<Discover />} />
                     <Route path="/admin/users" element={<AdminUsers />} />
