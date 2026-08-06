@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 import os
 
+from . import path_resolver
+
 # ──────────────────────────────────────────
 # Regex patterns
 # ──────────────────────────────────────────
@@ -146,7 +148,7 @@ def process_subtitle_file(path: str, cfg: dict) -> None:
 
     if need_write:
         try:
-            with open(path, "w", encoding="utf-8", newline="\n") as fh:
-                fh.write(text)
+            # Never truncate in place — the file may be hardlinked to a torrent.
+            path_resolver.atomic_write(path, text.replace("\r\n", "\n").encode("utf-8"))
         except Exception:
             pass

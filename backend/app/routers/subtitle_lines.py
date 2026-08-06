@@ -207,8 +207,7 @@ def save_subtitle_lines(
     else:
         raise HTTPException(400, "Only SRT format is supported for save; use /api/subtitle-editor for ASS")
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
+        path_resolver.atomic_write(path, content.encode("utf-8"))
     except Exception as e:
         raise HTTPException(500, f"Failed to write subtitle file: {e}")
     return {"saved": True, "path": path, "lines": len(body.lines)}

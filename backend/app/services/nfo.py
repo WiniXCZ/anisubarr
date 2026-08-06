@@ -22,7 +22,7 @@ from xml.etree import ElementTree as ET
 from xml.dom import minidom
 from typing import Optional
 
-from .path_resolver import resolve, ensure_smb, require_folder, unc_to_local
+from .path_resolver import atomic_write, resolve, ensure_smb, require_folder, unc_to_local
 
 log = logging.getLogger("anisubarr.nfo")
 
@@ -266,8 +266,7 @@ def _write(path: str, content: str) -> None:
     if local_path != path:
         log.debug(f"NFO path resolved: {path} → {local_path}")
     require_folder(local_path)   # the series folder is Sonarr's to create, not ours
-    with open(local_path, "w", encoding="utf-8") as f:
-        f.write(content)
+    atomic_write(local_path, content.encode("utf-8"))
     log.info(f"NFO → {local_path}")
 
 
