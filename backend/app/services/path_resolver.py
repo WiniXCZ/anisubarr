@@ -402,6 +402,51 @@ def require_folder(local_path: str) -> str:
     return target
 
 
+def atomic_write(local_path: str, data: bytes) -> None:
+    """Replace a file's contents without ever writing into a shared inode.
+
+    ``open(path, "w")`` truncates the inode the name points at. When Sonarr
+    hardlinked that file from the torrent — which is the whole point of
+    hardlinking, and what keeps a library from costing twice the disk — the
+    seeding copy *is* the same inode, so an edit rewrites the data the tracker
+    expects to find. The next hash check fails and the torrent dies.
+
+    Writing a new file and renaming it over the name gives the library the edit
+    and leaves the torrent's bytes untouched. The link count on the old data
+    drops by one; nothing is lost, and the download stays seedable. It is also
+    atomic: a container that dies mid-write leaves the old file, never half a
+    subtitle.
+    """
+    directory = os.path.dirname(local_path) or "."
+    tmp_path = os.path.join(directory, f".anisubarr-{os.path.basename(local_path)}.tmp")
+
+    # Match the file being replaced so Emby and Sonarr can still read the result.
+    mode = None
+    if os.path.exists(local_path):
+        try:
+            mode = os.stat(local_path).st_mode
+        except OSError:
+            pass
+
+    try:
+        with open(tmp_path, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if mode is not None:
+            try:
+                os.chmod(tmp_path, mode)
+            except OSError:
+                pass
+        os.replace(tmp_path, local_path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def subtitle_path_for(episode_path: str, language: str, ext: str) -> str:
     """
     Given a Sonarr episode path, return the drive-letter path for saving a subtitle.
@@ -419,6 +464,7 @@ def write_subtitle(dest_path: str, data: bytes) -> None:
     - Converts UNC to drive letter first (unc_to_local).
     - Clears read-only flag if the file already exists.
     - Refuses to write into a folder that isn't there (see TargetFolderMissing).
+    - Never truncates a shared inode (see atomic_write).
     """
     import stat
 
@@ -439,8 +485,7 @@ def write_subtitle(dest_path: str, data: bytes) -> None:
             log.warning(f"write_subtitle: chmod failed on {local_path}: {chmod_err}")
 
     try:
-        with open(local_path, "wb") as f:
-            f.write(data)
+        atomic_write(local_path, data)
         log.info(f"Saved subtitle → {local_path}")
     except PermissionError as e:
         # Give actionable diagnostic info rather than a raw OS error

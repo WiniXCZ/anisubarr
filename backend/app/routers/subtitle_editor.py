@@ -178,8 +178,7 @@ def shift_subtitle(
     shifted  = _shift_content(original, sub.format or "srt", req.shift_ms)
 
     if req.save:
-        with open(local, "w", encoding="utf-8") as f:
-            f.write(shifted)
+        path_resolver.atomic_write(local, shifted.encode("utf-8"))
 
     return {"sub_id": sub.id, "shift_ms": req.shift_ms, "saved": req.save, "content": shifted}
 
@@ -201,8 +200,7 @@ def save_subtitle(
         local = sub.file_path
 
     try:
-        with open(local, "w", encoding="utf-8") as f:
-            f.write(req.content)
+        path_resolver.atomic_write(local, req.content.encode("utf-8"))
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except Exception as e:

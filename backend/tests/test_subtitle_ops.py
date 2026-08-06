@@ -118,6 +118,31 @@ def test_stripping_styling_is_something_you_have_to_ask_for():
     assert ops.fix(styled, ["tags"])["lines"][0]["text"] == "kurzíva"
 
 
+def test_asking_for_the_usual_repairs_keeps_the_styling():
+    """"Fix errors" with nothing ticked must not be the destructive one."""
+    styled = [cue(0, 2, "<i>kurzíva</i>")]
+    assert ops.fix(styled)["lines"][0]["text"] == "<i>kurzíva</i>"
+    assert "tags" not in ops.SAFE_RULES
+
+
+def test_fixing_twice_leaves_nothing_to_warn_about():
+    """A warning the fix button can't clear sends people looking for a bug.
+    A cue hemmed in by its neighbour is lengthened as far as it fits, and the
+    report has to accept that instead of asking for the impossible."""
+    cramped = [cue(7.0, 7.2, "bliknutí"), cue(8.0, 12.0, "další")]
+
+    fixed = ops.fix(cramped, ["min_duration", "overlap"])["lines"]
+    assert fixed[0]["end"] < cramped[1]["start"]          # no new overlap
+    assert "short" not in ops.analyze(fixed)["summary"]   # and no leftover warning
+
+
+def test_a_genuinely_cramped_cue_is_still_reported():
+    """The tolerance is one frame, not a licence to ignore a flash frame."""
+    no_room = [cue(7.0, 7.2, "bliknutí"), cue(7.3, 12.0, "další")]
+    fixed = ops.fix(no_room, ["min_duration", "overlap"])["lines"]
+    assert "short" in ops.analyze(fixed)["summary"]
+
+
 def test_the_report_only_names_rules_that_changed_something():
     fixed = ops.fix([cue(0, 2, "v pořádku")], ["empty", "overlap", "spaces"])
     assert fixed["report"] == {}

@@ -190,7 +190,9 @@ export default function EditorToolbar({
                 onClose={() => setDialog(null)}>
           <p className="text-xs text-muted leading-relaxed">{t("sube_fix_desc")}</p>
 
-          <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
+          {/* Tall enough for every rule: the one that throws styling away is
+              last in the list, and a scrollbar nobody notices was hiding it. */}
+          <div className="flex flex-col gap-1 max-h-[26rem] overflow-y-auto">
             {ops.FIX_RULES.map((rule) => {
               const found = analysis?.summary?.[
                 { order: "order", empty: "empty", overlap: "overlap",
