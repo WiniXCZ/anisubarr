@@ -34,6 +34,12 @@ services:
       # Uncomment together with LOCAL_SUBTITLE_DIR=/subs in .env.
       # - ${LOCAL_SUBTITLE_PATH:-/mnt/user/titulky}:/subs:rw
     environment:
+      # Kdo vlastní soubory, které Anisubarr zapíše. Bez tohohle běží
+      # kontejner jako root a Emby (nobody) pak nemůže přepsat vlastní NFO.
+      # Na Unraidu 99:100 = nobody:users.
+      - PUID=${PUID:-99}
+      - PGID=${PGID:-100}
+      - UMASK=${UMASK:-002}
       - DATABASE_URL=sqlite:///./data/anisubarr.db
       - SONARR_HOST=${SONARR_HOST}
       - SONARR_API_KEY=${SONARR_API_KEY}

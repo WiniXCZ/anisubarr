@@ -402,6 +402,32 @@ def require_folder(local_path: str) -> str:
     return target
 
 
+def _inherited_permissions(local_path: str, directory: str):
+    """The mode and owner a file written here should end up with.
+
+    Anisubarr's container runs as root, so everything it writes lands as
+    root:root — and Emby, running as nobody, then cannot rewrite its own NFO.
+    That produced hundreds of "Error in metadata saver: Permission denied" in
+    Emby's log for files Anisubarr had created first.
+
+    A file replacing another keeps that file's mode and owner. A new one takes
+    them from the folder it goes into, which Sonarr created with the ownership
+    the whole library uses — so the result belongs where it lands regardless of
+    who Anisubarr happens to be running as. Directory bits are masked off: a
+    0775 folder yields a 0664 file, not an executable one.
+    """
+    try:
+        existing = os.stat(local_path)
+        return existing.st_mode, (existing.st_uid, existing.st_gid)
+    except OSError:
+        pass
+    try:
+        parent = os.stat(directory)
+        return parent.st_mode & 0o666, (parent.st_uid, parent.st_gid)
+    except OSError:
+        return None, None
+
+
 def atomic_write(local_path: str, data: bytes) -> None:
     """Replace a file's contents without ever writing into a shared inode.
 
@@ -419,14 +445,7 @@ def atomic_write(local_path: str, data: bytes) -> None:
     """
     directory = os.path.dirname(local_path) or "."
     tmp_path = os.path.join(directory, f".anisubarr-{os.path.basename(local_path)}.tmp")
-
-    # Match the file being replaced so Emby and Sonarr can still read the result.
-    mode = None
-    if os.path.exists(local_path):
-        try:
-            mode = os.stat(local_path).st_mode
-        except OSError:
-            pass
+    mode, owner = _inherited_permissions(local_path, directory)
 
     try:
         with open(tmp_path, "wb") as fh:
@@ -438,6 +457,11 @@ def atomic_write(local_path: str, data: bytes) -> None:
                 os.chmod(tmp_path, mode)
             except OSError:
                 pass
+        if owner is not None:
+            try:
+                os.chown(tmp_path, owner[0], owner[1])
+            except (OSError, AttributeError):
+                pass    # not root, or Windows — the mode alone will have to do
         os.replace(tmp_path, local_path)
     except BaseException:
         try:

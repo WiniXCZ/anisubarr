@@ -29,7 +29,9 @@ FROM python:3.12-slim
 # build-essential: webrtcvad (a transitive dep of ffsubsync) ships no prebuilt
 # wheel for any Python version — pip always compiles its C extension from
 # source, which fails on python:3.12-slim without a compiler present.
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl build-essential \
+# gosu: drops root in the entrypoint so files land owned by PUID/PGID rather
+# than by root, which is what let Emby fail to rewrite its own metadata.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl build-essential gosu \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/backend
@@ -51,6 +53,9 @@ COPY --from=frontend-build /build/dist /app/frontend/dist
 # Public visitor site — static, no build step (see public_site/)
 COPY public_site/ /app/public_site/
 
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 EXPOSE 8000
 EXPOSE 8090
 
@@ -61,4 +66,5 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
 # public visitor site (PUBLIC_PORT, default 8090 — 8080 is left free since
 # that's qBittorrent's default WebUI port) in one process.
 # Set PUBLIC_PORT=0 to disable the public site entirely.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python", "run.py"]
