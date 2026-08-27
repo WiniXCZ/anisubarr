@@ -167,3 +167,46 @@ def test_cutting_a_video_never_opens_the_source_for_writing():
            (before.st_ino, before.st_mtime, before.st_size)
     assert after.st_nlink == 2          # the hardlink is still a hardlink
     assert os.path.exists(out)
+
+
+# ── ownership ────────────────────────────────────────────────────────────────
+
+def test_a_new_file_takes_the_folders_permissions(seeded):
+    """The container runs as root, so a file it creates comes out root:root and
+    Emby — running as nobody — cannot rewrite its own NFO afterwards. Taking the
+    folder's bits instead means the file belongs where it lands."""
+    lib_file, _ = seeded
+    folder = os.path.dirname(lib_file)
+    os.chmod(folder, 0o775)
+    fresh = os.path.join(folder, "Show - S01E03.cs.srt")
+
+    path_resolver.atomic_write(fresh, b"novy titulek")
+
+    assert os.stat(fresh).st_mode & 0o777 == 0o664   # not 0644, and not executable
+
+
+def test_a_replaced_file_keeps_its_own_permissions(seeded):
+    """Whoever set the mode on an existing subtitle had a reason."""
+    lib_file, _ = seeded
+    os.chmod(os.path.dirname(lib_file), 0o700)
+    os.chmod(lib_file, 0o666)
+
+    path_resolver.atomic_write(lib_file, b"novy obsah")
+    assert os.stat(lib_file).st_mode & 0o777 == 0o666
+
+
+def test_a_new_file_inherits_the_owner_when_it_can(seeded):
+    """Running as root, the write can hand the file to the folder's owner."""
+    lib_file, _ = seeded
+    folder = os.path.dirname(lib_file)
+    fresh = os.path.join(folder, "Show - S01E04.cs.srt")
+
+    path_resolver.atomic_write(fresh, b"novy titulek")
+
+    parent = os.stat(folder)
+    written = os.stat(fresh)
+    if os.geteuid() == 0:
+        assert (written.st_uid, written.st_gid) == (parent.st_uid, parent.st_gid)
+    else:
+        # Not root: chown is refused, and that must not break the write.
+        assert open(fresh, "rb").read() == b"novy titulek"
