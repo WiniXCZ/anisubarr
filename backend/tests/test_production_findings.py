@@ -268,3 +268,66 @@ def test_the_scraper_factory_and_the_audit_agree_a_disabled_provider_is_off(db):
 
     assert _provider_enabled("hiyori", session) is False
     assert audit._hiyori_check_due(_series(db), session) is False
+
+
+# ── WordPress sets the same cookie twice ─────────────────────────────────────
+
+def test_a_duplicated_session_cookie_does_not_break_the_login():
+    """WordPress hands out its session cookie for both "/" and "/wp-admin/",
+    and dict(client.cookies) raises CookieConflict on that — so the scraper
+    fell over on the line right after a login that had just succeeded. It could
+    not show up until the login started working."""
+    import httpx
+    from app.services.kamui import _cookie_values
+
+    client = httpx.Client()
+    client.cookies.set("wordpress_sec_abc", "prvni", domain="kamui-subs.cz", path="/")
+    client.cookies.set("wordpress_sec_abc", "druha", domain="kamui-subs.cz", path="/wp-admin/")
+
+    with pytest.raises(Exception):
+        dict(client.cookies)          # the shape that broke
+
+    assert _cookie_values(client) == {"wordpress_sec_abc": "druha"}
+
+
+def test_kamui_stores_cookies_the_way_the_other_scrapers_do():
+    """hns.py and hiyori.py already read the jar; kamui was the odd one out."""
+    from pathlib import Path
+
+    source = Path("app/services/kamui.py").read_text(encoding="utf-8")
+    assert "dict(c.cookies)" not in source
+
+
+# ── a switch that says off must not read as on ───────────────────────────────
+
+def test_an_unreadable_registry_counts_as_switched_off():
+    """Fail-open on a kill switch means a database hiccup re-enables the one
+    provider whose rate limits already cost an account."""
+    from app.services.connections import provider_enabled
+
+    broken = MagicMock()
+    broken.query.side_effect = RuntimeError("databáze nedostupná")
+
+    assert provider_enabled(broken, "hiyori") is False
+
+
+# ── a subtitle path from Sonarr's namespace still resolves ───────────────────
+
+def test_a_stored_sonarr_path_is_resolved_before_the_file_is_touched(tmp_path):
+    """_unc_to_local is a Windows-only helper: on Linux it hands the path back
+    unchanged, so a row holding /data/media/... was looked for under a prefix
+    this container never mounts — 410 subtitles that are on the disk read as
+    missing."""
+    from types import SimpleNamespace
+    from app.routers.subtitles import _subtitle_local_path
+    from app.services import path_resolver
+
+    real = tmp_path / "Show - S01E01.cs.srt"
+    real.write_text("titulek")
+
+    sub = SimpleNamespace(file_path="/data/media/anime/Show - S01E01.cs.srt")
+    with patch.object(path_resolver, "_cfg_value",
+                      lambda key, default="": {
+                          "path_mappings": f'[{{"from": "/data/media/anime", "to": "{tmp_path}"}}]'
+                      }.get(key, "")):
+        assert _subtitle_local_path(sub) == str(real)

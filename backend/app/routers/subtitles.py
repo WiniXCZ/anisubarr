@@ -1104,7 +1104,7 @@ def delete_subtitles_bulk(
     for sub in subs:
         if sub.file_path and not sub.is_embedded:
             try:
-                local_path = _unc_to_local(sub.file_path)
+                local_path = _subtitle_local_path(sub)
                 if os.path.isfile(local_path):
                     os.remove(local_path)
             except Exception:
@@ -1157,7 +1157,7 @@ def _delete_subs(db, subs) -> int:
     for sub in subs:
         if sub.file_path and not sub.is_embedded:
             try:
-                local_path = _unc_to_local(sub.file_path)
+                local_path = _subtitle_local_path(sub)
                 if os.path.isfile(local_path):
                     os.remove(local_path)
             except Exception:
@@ -1256,7 +1256,7 @@ def delete_subtitle(
     if sub.file_path and not sub.is_embedded:
         try:
             from .subtitle_sync import _unc_to_local
-            local_path = _unc_to_local(sub.file_path)
+            local_path = _subtitle_local_path(sub)
             if os.path.isfile(local_path):
                 os.remove(local_path)
         except Exception:
@@ -1703,6 +1703,23 @@ def _save_subtitle(ep: Episode, data: bytes, language: str, ext: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # Lang-check hook — volej po každém uložení subtitlu do DB
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _subtitle_local_path(sub) -> str:
+    """Where this subtitle actually is, from the path the row happens to hold.
+
+    Rows written before a path mapping existed hold Sonarr's own namespace
+    (``/data/media/…``), and these three call sites used ``_unc_to_local``,
+    which is a Windows-only helper — on Linux it hands the path straight back.
+    So the file was looked for under a prefix this container never mounts, and
+    410 subtitles that are on the disk read as missing. Resolving first is what
+    the rest of the code already does, and it keeps working when the mount
+    changes, which a rewritten absolute path in the database would not.
+    """
+    try:
+        return path_resolver.unc_to_local(path_resolver.resolve(sub.file_path))
+    except Exception:
+        return _unc_to_local(sub.file_path)
+
 
 def _langcheck_after_download(db, sub) -> dict | None:
     """
