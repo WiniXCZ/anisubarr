@@ -28,6 +28,18 @@ _UA = (
 )
 
 
+def _cookie_values(client) -> dict:
+    """Cookie name → value, tolerating the same name set twice.
+
+    WordPress hands out its session cookie for both "/" and "/wp-admin/", and
+    ``dict(client.cookies)`` raises CookieConflict on that — so the scraper fell
+    over on the line right after a login that had just succeeded. Reading the
+    jar takes the last value for a name, which is what the other two scrapers
+    already do. It could not show up before, because nobody ever got logged in.
+    """
+    return {ck.name: ck.value for ck in client.cookies.jar}
+
+
 class KamuiScraper:
     def __init__(self, username: str, password: str,
                  rar_password: str = "kamui", timeout: int = 20):
@@ -106,7 +118,7 @@ class KamuiScraper:
 
             # Check if already logged in
             if self._is_logged_in(r.text):
-                self._cookies = dict(c.cookies)
+                self._cookies = _cookie_values(c)
                 log.info("Kamui: již přihlášen (cookie)")
                 return
 
@@ -238,7 +250,7 @@ class KamuiScraper:
                     f"(POST šel na {action})"
                 )
 
-            self._cookies = dict(c.cookies)
+            self._cookies = _cookie_values(c)
             log.info("Kamui: přihlášení OK jako '%s'", self.username)
 
     def _is_logged_in(self, html: str) -> bool:

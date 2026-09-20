@@ -123,8 +123,14 @@ def provider_enabled(db: Session, provider: str) -> bool:
     try:
         from ..models.service import Service
         row = db.query(Service).filter(Service.type == provider).first()
-    except Exception:
-        return True
+    except Exception as exc:
+        # A switch that says "off" must not read as "on" because a query
+        # failed. This is what guards an account against its own rate limits,
+        # so the safe direction is silence — and the reason is logged, because
+        # a provider that goes quiet without explanation is its own bug report.
+        log.warning("[connections] stav %s se nepodařilo zjistit (%s) — "
+                    "považuji za vypnutý", provider, exc)
+        return False
     if row is None:
         return True
     if not row.enabled:
