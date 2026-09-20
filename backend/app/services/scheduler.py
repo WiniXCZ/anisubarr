@@ -654,6 +654,43 @@ def job_ollama_translate():
 # Registry: job_id → (fn, default_interval, default_hour, name, description)
 # ──────────────────────────────────────────
 
+def job_reconcile_subtitles():
+    """Bring the subtitles table back in line with the disk.
+
+    Resolving fixes a row whose prefix is stale, but not one whose file was
+    converted to another format — and a row whose file is gone is worse than
+    useless, because it tells Anisubarr the episode is covered and stops a
+    replacement ever being downloaded.
+    """
+    from ..database import SessionLocal
+    from ..utils.settings_helper import read_setting
+    from .subtitle_reconcile import reconcile
+
+    db = SessionLocal()
+    try:
+        delete_missing = read_setting("subtitle_reconcile_delete_missing", db) != "false"
+        report = reconcile(db, delete_missing=delete_missing)
+    finally:
+        db.close()
+
+    parts = [f"{report['ok']} v pořádku"]
+    if report["repaired"]:
+        parts.append(f"{report['repaired']} opraveno")
+    if report["deleted"]:
+        parts.append(f"{report['deleted']} fantomů smazáno")
+    elif report["missing"]:
+        parts.append(f"{report['missing']} chybí (nemazáno)")
+    if report["unreachable"]:
+        parts.append(f"{report['unreachable']} nedosažitelných")
+    if report.get("aborted"):
+        parts.append("mazání zastaveno — úložiště vypadá nedostupně")
+
+    from . import job_log
+    run_id = job_log.current_run_id("reconcile_subtitles")
+    if run_id:
+        job_log.update_message(run_id, ", ".join(parts))
+
+
 def job_prune_audit_log():
     """Drop audit rows nobody will read again.
 
@@ -791,6 +828,14 @@ JOB_REGISTRY: dict[str, dict] = {
         "interval":    "daily",
         "hour":        4,
         "minute":      0,
+    },
+    "reconcile_subtitles": {
+        "fn":          job_reconcile_subtitles,
+        "name":        "Srovnání titulků s diskem",
+        "description": "Opraví záznamy titulků, jejichž soubor se převedl do jiného formátu, a smaže ty, jejichž soubor už neexistuje",
+        "interval":    "daily",
+        "hour":        4,
+        "minute":      45,
     },
     "prune_audit_log": {
         "fn":          job_prune_audit_log,
