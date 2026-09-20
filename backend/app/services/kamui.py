@@ -207,21 +207,36 @@ class KamuiScraper:
             payload[user_field] = self.username
             payload[pass_field] = self.password
 
-            action = form.get("action", login_url)
+            # action="" means "post to this same page" — and that is what the
+            # site's form carries. `.get(key, default)` only falls back when the
+            # attribute is absent, so an empty one came through as "" and
+            # urljoin turned it into the site root. The login then arrived
+            # somewhere that never handles it, and WordPress rejected the nonce.
+            action = form.get("action") or login_url
             if not action.startswith("http"):
-                action = urljoin(BASE_URL, action)
+                action = urljoin(login_url, action)
 
             time.sleep(1)
             r_login = self._post(c, action, data=payload)
             r_login.raise_for_status()
 
             if not self._is_logged_in(r_login.text):
-                # Check if still on login page (= wrong credentials)
-                if "login" in str(r_login.url).lower() or "prihlaseni" in str(r_login.url).lower():
+                # Not logged in is not logged in. This used to fall through to
+                # the success log whenever the response URL happened to mention
+                # neither "login" nor "prihlaseni" — so a rejected login was
+                # recorded as OK and every later search ran anonymously, found
+                # nothing, and wrote one more "nenalezeno" row to the audit log.
+                landed = str(r_login.url)
+                if "login" in landed.lower() or "prihlaseni" in landed.lower():
                     raise PermissionError(
                         f"kamui-subs.cz: přihlášení selhalo pro '{self.username}' — "
                         f"zkontroluj přihlašovací údaje"
                     )
+                raise PermissionError(
+                    f"kamui-subs.cz: přihlášení pro '{self.username}' neprošlo — "
+                    f"odpověď z {landed} nevypadá jako přihlášený uživatel "
+                    f"(POST šel na {action})"
+                )
 
             self._cookies = dict(c.cookies)
             log.info("Kamui: přihlášení OK jako '%s'", self.username)

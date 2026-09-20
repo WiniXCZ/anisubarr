@@ -1,0 +1,207 @@
+"""
+Findings from a scan of the running instance, each pinned by a test.
+
+The numbers came from production: 11 184 hiyori rows for a provider switched
+off, 43 MB of 82 MB spent on nightly "found nothing", 1640 identical warnings
+in 90 seconds, and a login that reported success while every search that
+followed ran anonymously.
+"""
+import os
+import tempfile
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
+
+_tmpdir = tempfile.mkdtemp(prefix="anisubarr-prod-test-")
+os.environ.setdefault("DATABASE_URL", f"sqlite:///{_tmpdir}/test.db")
+os.environ.setdefault("JWT_SECRET", "test-secret-not-for-production")
+
+import pytest  # noqa: E402
+
+from app.database import SessionLocal, create_all  # noqa: E402
+from app.models.audit_log import SeriesAuditLog  # noqa: E402
+from app.models.series import Series  # noqa: E402
+from app.models.service import Service  # noqa: E402
+
+create_all()
+
+
+# ── a provider switched off is not talked to ─────────────────────────────────
+
+# The suite shares one SQLite file, so every module has to clean up after
+# itself and stay out of the id ranges the others use.
+_ID_BASE = 990_000
+_next_id = iter(range(_ID_BASE, _ID_BASE + 500))
+
+
+@pytest.fixture
+def db():
+    session = SessionLocal()
+    mine: list[int] = []
+    try:
+        yield session, mine
+    finally:
+        session.rollback()
+        if mine:
+            session.query(SeriesAuditLog).filter(
+                SeriesAuditLog.series_id.in_(mine)).delete(synchronize_session=False)
+            session.query(Series).filter(Series.id.in_(mine)).delete(synchronize_session=False)
+        session.query(Service).filter(Service.name == "Hiyori (test)").delete()
+        session.commit()
+        session.close()
+
+
+def _series(bundle):
+    session, mine = bundle
+    s = Series(title="Test Show", sonarr_id=next(_next_id))
+    session.add(s)
+    session.commit()
+    mine.append(s.id)
+    return s
+
+
+def test_the_audit_leaves_hiyori_alone_when_it_is_switched_off(db):
+    """The audit asks hiyori "is this planned or revived" for its own reasons
+    and built its scraper straight from the credentials, so the switch that
+    turns hiyori off as a subtitle source never reached it — leaving it calling
+    the one provider whose rate limits already cost an account."""
+    from app.services import audit
+
+    session, _ = db
+    session.add(Service(name="Hiyori (test)", type="hiyori", enabled=False))
+    session.commit()
+
+    assert audit._hiyori_check_due(_series(db), session) is False
+
+
+def test_an_enabled_hiyori_is_still_checked(db):
+    from app.services import audit
+
+    session, _ = db
+    session.add(Service(name="Hiyori (test)", type="hiyori", enabled=True))
+    session.commit()
+
+    assert audit._hiyori_check_due(_series(db), session) is True
+
+
+def test_no_registry_row_keeps_the_old_behaviour(db):
+    """An install that predates the registry must not go quiet."""
+    from app.services import audit
+
+    session, _ = db
+    assert audit._hiyori_check_due(_series(db), session) is True
+
+
+# ── the audit log stops growing forever ──────────────────────────────────────
+
+def test_pruning_drops_old_rows_and_frees_the_detail_of_recent_ones(db):
+    """575 rows a day with no retention, most of them a nightly "found nothing"
+    carrying 1.8 kB of per-episode detail, grew to half the database — and
+    every backup copied the weight again."""
+    from app.services.scheduler import job_prune_audit_log
+
+    session, _ = db
+    s = _series(db)
+    now = datetime.now(timezone.utc)
+    rows = [
+        ("ancient", now - timedelta(days=200), "subtitle_search", "{}"),
+        ("stale-detail", now - timedelta(days=30), "subtitle_search", "{}"),
+        ("recent", now - timedelta(days=1), "subtitle_search", "{}"),
+        ("state", now - timedelta(days=30), "state_change", None),
+    ]
+    for message, when, kind, detail in rows:
+        session.add(SeriesAuditLog(series_id=s.id, event_type=kind,
+                                   message=message, detail=detail, created_at=when))
+    session.commit()
+
+    job_prune_audit_log()
+    session.expire_all()
+
+    left = {r.message: r for r in
+            session.query(SeriesAuditLog).filter(SeriesAuditLog.series_id == s.id).all()}
+    assert "ancient" not in left, "řádek za hranicí uchování měl zmizet"
+    assert left["stale-detail"].detail is None, "objemný detail měl být zahozen"
+    assert left["recent"].detail == "{}", "čerstvý detail se má nechat"
+    assert "state" in left, "změna stavu není hledání — nemá se zahazovat"
+
+
+# ── a login that failed is not a login that worked ───────────────────────────
+
+def _kamui_with(login_html, response_html, response_url):
+    from app.services.kamui import KamuiScraper
+
+    scraper = KamuiScraper("uzivatel", "heslo")
+    client = MagicMock()
+    posted = {}
+
+    get_resp = MagicMock(text=login_html, url="https://kamui-subs.cz/login/")
+    get_resp.raise_for_status = lambda: None
+
+    def _post(self, _c, url, data=None, **kw):
+        posted["url"] = url
+        r = MagicMock(text=response_html, url=response_url)
+        r.raise_for_status = lambda: None
+        return r
+
+    return scraper, client, posted, get_resp, _post
+
+
+_FORM = ('<form action="" method="post">'
+         '<input name="user_login"><input name="user_password" type="password">'
+         '</form>')
+
+
+def test_an_empty_form_action_posts_back_to_the_login_page():
+    """action="" means "post to this same page". `.get(key, default)` only falls
+    back when the attribute is absent, so an empty one came through as "" and
+    urljoin turned it into the site root — where the login is never handled."""
+    from app.services import kamui as kamui_mod
+
+    scraper, client, posted, get_resp, post = _kamui_with(
+        _FORM, "<a>Odhlásit</a>", "https://kamui-subs.cz/")
+
+    with patch.object(kamui_mod.KamuiScraper, "_make_client",
+                      lambda self: MagicMock(__enter__=lambda s: client,
+                                             __exit__=lambda *a: None)), \
+         patch.object(kamui_mod.KamuiScraper, "_get", lambda self, c, url, **kw: get_resp), \
+         patch.object(kamui_mod.KamuiScraper, "_post", post), \
+         patch.object(kamui_mod.time, "sleep", lambda *_: None):
+        scraper._login_impl()
+
+    assert posted["url"] != "https://kamui-subs.cz"
+    assert "login" in posted["url"]
+
+
+def test_a_rejected_login_is_not_reported_as_success():
+    """It used to fall through to the success log whenever the response URL
+    mentioned neither "login" nor "prihlaseni" — so a rejected login was
+    recorded as OK and every later search ran anonymously and found nothing."""
+    from app.services import kamui as kamui_mod
+
+    scraper, client, posted, get_resp, post = _kamui_with(
+        _FORM, "<p>invalid_nonce</p>", "https://kamui-subs.cz/")
+
+    with patch.object(kamui_mod.KamuiScraper, "_make_client",
+                      lambda self: MagicMock(__enter__=lambda s: client,
+                                             __exit__=lambda *a: None)), \
+         patch.object(kamui_mod.KamuiScraper, "_get", lambda self, c, url, **kw: get_resp), \
+         patch.object(kamui_mod.KamuiScraper, "_post", post), \
+         patch.object(kamui_mod.time, "sleep", lambda *_: None):
+        with pytest.raises(PermissionError):
+            scraper._login_impl()
+
+
+# ── the healthcheck stops eating the log ─────────────────────────────────────
+
+def test_the_healthcheck_is_kept_out_of_the_log():
+    """Every 30 s, so 3000 lines covered barely seven hours: anything that broke
+    overnight left no trace by morning."""
+    import logging
+    from app.main import _DropHealthChecks
+
+    drop = _DropHealthChecks()
+
+    def line(message):
+        return logging.LogRecord("uvicorn.access", logging.INFO, "", 0, message, (), None)
+
+    assert drop.filter(line('GET /api/health HTTP/1.1" 200')) is False
+    assert drop.filter(line('GET /api/series HTTP/1.1" 200')) is True

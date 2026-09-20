@@ -384,7 +384,26 @@ def evaluate_damage_ratio(series: Series, damage_info: dict | None) -> dict:
 
 # ── Logic 4: hiyori "planned / revived" check ──────────────────────────────
 
+def _hiyori_provider_enabled(db: Session) -> bool:
+    """Is hiyori switched on in Připojení → Poskytovatelé?
+
+    The audit talks to hiyori.cz for its own reason — "is this series planned
+    or revived" — and built its scraper straight from the credentials, so the
+    switch that turns hiyori off as a subtitle source never reached it. Turning
+    it off in the UI left the audit calling the site once per series per day,
+    against the one provider whose rate limits already cost an account.
+    """
+    try:
+        from ..models.service import Service
+        row = db.query(Service).filter(Service.type == "hiyori").first()
+        return bool(row.enabled) if row else True
+    except Exception:
+        return True
+
+
 def _hiyori_check_due(series: Series, db: Session) -> bool:
+    if not _hiyori_provider_enabled(db):
+        return False
     interval_hours = float(_rs("audit_hiyori_check_interval_hours", db) or "24")
     last = _to_aware(series.last_hiyori_check_at)
     if last is None:

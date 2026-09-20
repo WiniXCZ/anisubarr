@@ -134,6 +134,12 @@ def job_download_missing():
         # what the outcome was.
         series_search_log: dict[int, list[dict]] = {}
 
+        # Run-scoped, not per-episode: a provider that hit its limit stays out
+        # for the rest of the run. Resetting this every episode meant each of
+        # 1640 episodes rediscovered the same block, asked the banned provider
+        # again, and logged the same warning — 1640 warnings in 90 seconds.
+        blocked_providers: set[str] = set()
+
         for ep in missing:
             ep_id = ep.id  # cache before any operation that might expire the ORM object
             ep_label = f"S{ep.season_number:02d}E{ep.episode_number:02d}"
@@ -141,8 +147,12 @@ def job_download_missing():
             tried_sources: list[str] = []
             try:
                 results = []
-                blocked_providers: set[str] = set()
                 for src, scraper in scrapers.items():
+                    # A provider that already hit its limit stays out for the
+                    # rest of the run — asking it again once per episode is a
+                    # request it cannot serve and a warning nobody needs twice.
+                    if src in blocked_providers:
+                        continue
                     tried_sources.append(src)
                     try:
                         found = scraper.search(
@@ -154,8 +164,9 @@ def job_download_missing():
                     except RateLimitExceeded as rl:
                         # One provider being banned/exhausted must not disable
                         # the rest of the pipeline.
+                        if src not in blocked_providers:
+                            log.warning("[scheduler] %s nedostupný pro zbytek běhu: %s", src, rl)
                         blocked_providers.add(src)
-                        log.warning("[scheduler] %s nedostupný: %s", src, rl)
                         continue
                     results.extend(found)
                     if found:
@@ -264,8 +275,14 @@ def job_download_missing():
                     parts.append(f"chyba {len(errors)}")
                 summary = ", ".join(parts) if parts else "žádný výsledek"
                 message = f"Hledání titulků (denní úloha): {len(entries)} epizod — {summary}"
+                # The per-episode blob is ~1.8 kB and only earns that when
+                # something happened. A run that found nothing says so in the
+                # message; storing the same "not_found" list every night for
+                # every series filled half the database with nothing.
+                detail = (json.dumps(entries, ensure_ascii=False)
+                          if (downloaded or errors) else None)
                 try:
-                    _log_event(db, sid, "subtitle_search", message, detail=json.dumps(entries, ensure_ascii=False))
+                    _log_event(db, sid, "subtitle_search", message, detail=detail)
                 except Exception as e:
                     db.rollback()
                     log.warning(f"[scheduler] subtitle_search log series {sid}: {e}")
@@ -637,6 +654,53 @@ def job_ollama_translate():
 # Registry: job_id → (fn, default_interval, default_hour, name, description)
 # ──────────────────────────────────────────
 
+def job_prune_audit_log():
+    """Drop audit rows nobody will read again.
+
+    The log had no retention at all: 575 rows a day, most of them a nightly
+    "found nothing" carrying a kilobyte and a half of per-episode detail. That
+    grew to half the database, and every backup copied the weight again.
+
+    Two windows, because the rows are not worth the same. The heavy ``detail``
+    blob on a search row is for diagnosing a search that just ran, so it goes
+    first; the human-readable message stays, so the history stays readable.
+    Everything else ages out on the longer window.
+    """
+    from datetime import timedelta
+    from ..database import SessionLocal
+    from ..models.audit_log import SeriesAuditLog
+    from ..utils.settings_helper import read_setting
+
+    db = SessionLocal()
+    try:
+        keep_days = int(read_setting("audit_log_retention_days", db) or "90")
+        detail_days = int(read_setting("audit_log_detail_retention_days", db) or "14")
+        now = datetime.now(timezone.utc)
+
+        stripped = (
+            db.query(SeriesAuditLog)
+            .filter(SeriesAuditLog.event_type == "subtitle_search",
+                    SeriesAuditLog.detail.isnot(None),
+                    SeriesAuditLog.created_at < now - timedelta(days=detail_days))
+            .update({"detail": None}, synchronize_session=False)
+        )
+        deleted = (
+            db.query(SeriesAuditLog)
+            .filter(SeriesAuditLog.created_at < now - timedelta(days=keep_days))
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        log.info("[scheduler] prune_audit_log → %d řádků smazáno, %d detailů zahozeno",
+                 deleted, stripped)
+        from . import job_log
+        run_id = job_log.current_run_id("prune_audit_log")
+        if run_id:
+            job_log.update_message(
+                run_id, f"{deleted} řádků smazáno, {stripped} detailů zahozeno")
+    finally:
+        db.close()
+
+
 JOB_REGISTRY: dict[str, dict] = {
     "sonarr_sync": {
         "fn":          job_sonarr_sync,
@@ -727,6 +791,14 @@ JOB_REGISTRY: dict[str, dict] = {
         "interval":    "daily",
         "hour":        4,
         "minute":      0,
+    },
+    "prune_audit_log": {
+        "fn":          job_prune_audit_log,
+        "name":        "Prořezání auditního logu",
+        "description": "Smaže staré záznamy v logu seriálů a zahodí objemné detaily hledání (Nastavení → audit_log_retention_days)",
+        "interval":    "daily",
+        "hour":        4,
+        "minute":      30,
     },
     "audit_check": {
         "fn":          job_audit_check,

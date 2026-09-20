@@ -21,6 +21,44 @@ logging.basicConfig(
         logging.FileHandler(_LOG_FILE, encoding="utf-8"),
     ],
 )
+
+
+class _DropHealthChecks(logging.Filter):
+    """Keep the Docker healthcheck out of the log.
+
+    It polls /api/health every 30 s, so a 3000-line log covered barely seven
+    hours: something that broke overnight left no trace by morning. The check
+    still runs and still fails the container when it should — it just stops
+    spending the log on saying it worked.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/api/health" not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(_DropHealthChecks())
+
+
+def _log_identity() -> None:
+    """Say who the process is, once, at startup.
+
+    ``docker exec … id`` reports the image's configured user, not the one the
+    entrypoint dropped to, so it answers "am I still root?" wrongly. The
+    process's own view is the only reliable one, and it belongs in the log
+    where anyone diagnosing a permissions problem will already be looking.
+    """
+    try:
+        import os as _os
+        umask = _os.umask(0o022)
+        _os.umask(umask)
+        logging.getLogger("anisubarr").info(
+            "spuštěno jako uid=%d gid=%d umask=%04o", _os.getuid(), _os.getgid(), umask
+        )
+    except Exception:
+        pass
+
+
+_log_identity()
 from .routers import (
     auth, series, sync, video, subtitles, schedule, paths, nfo,
     jobs, users, calendar, filebrowser, subtitle_editor, seerr,
