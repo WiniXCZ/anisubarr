@@ -172,6 +172,23 @@ def mappings() -> list[dict]:
     return rules
 
 
+def _under_prefix(path: str, prefix: str) -> bool:
+    """Does ``path`` lie under ``prefix``, counted in whole path components?
+
+    A plain ``startswith`` compares characters, so the rule ``/data`` also
+    claimed ``/database/dump.mkv`` and rewrote it to ``/mediabase/dump.mkv`` —
+    a path that exists nowhere, surfacing later as "the folder is missing"
+    with nothing to suggest the mapping had mangled it. Sonarr roots like
+    ``/data-4k`` sit right next to ``/data``, so the boundary has to be the
+    separator, not the character count.
+    """
+    path = path.replace("\\", "/")
+    prefix = prefix.replace("\\", "/").rstrip("/")
+    if not prefix:
+        return False
+    return path == prefix or path.startswith(prefix + "/")
+
+
 def resolve(sonarr_path: str) -> str:
     """
     Convert a Sonarr-side path to a locally accessible path.
@@ -187,7 +204,7 @@ def resolve(sonarr_path: str) -> str:
     normalised_in = sonarr_path.replace("\\", "/")
     sonarr_prefix = local_prefix = ""
     for rule in mappings():
-        if normalised_in.startswith(rule["from"].replace("\\", "/")):
+        if _under_prefix(normalised_in, rule["from"]):
             sonarr_prefix, local_prefix = rule["from"], rule["to"]
             break
 
@@ -203,8 +220,8 @@ def resolve(sonarr_path: str) -> str:
     # Normalise the sonarr path to forward slashes for comparison
     normalised = sonarr_path.replace("\\", "/")
 
-    sonarr_prefix_norm = sonarr_prefix.replace("\\", "/")
-    if not normalised.startswith(sonarr_prefix_norm):
+    sonarr_prefix_norm = sonarr_prefix.replace("\\", "/").rstrip("/")
+    if not _under_prefix(normalised, sonarr_prefix_norm):
         log.warning(f"Sonarr path '{sonarr_path}' does not start with prefix '{sonarr_prefix}'")
         return sonarr_path
 

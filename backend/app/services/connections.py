@@ -106,6 +106,33 @@ def resolve_provider(db: Session, provider: str) -> tuple[str, str, str]:
     )
 
 
+def provider_enabled(db: Session, provider: str) -> bool:
+    """Is this subtitle provider switched on?
+
+    One answer, in one place. There used to be two copies of this check —
+    ``subtitles._provider_enabled`` for the scrapers and a second one in the
+    audit — which is the same disease as the credentials living in both
+    ``app_settings`` and ``services``: the UI toggles one, the code reads the
+    other, and a provider turned off in the interface keeps being called. That
+    cost 11 184 requests to a site whose rate limits had already burned an
+    account.
+
+    The registry row is authoritative when it exists. Without one the answer
+    stays True, so an install that predates the registry keeps working.
+    """
+    try:
+        from ..models.service import Service
+        row = db.query(Service).filter(Service.type == provider).first()
+    except Exception:
+        return True
+    if row is None:
+        return True
+    if not row.enabled:
+        log.info("[connections] %s je vypnutý — přeskakuji", provider)
+        return False
+    return True
+
+
 def enabled_provider_order(db: Session) -> list[str] | None:
     """Provider types to try, in priority order, or None when the registry
     holds no providers yet (caller then falls back to the legacy setting)."""

@@ -384,7 +384,18 @@ def evaluate_damage_ratio(series: Series, damage_info: dict | None) -> dict:
 
 # ── Logic 4: hiyori "planned / revived" check ──────────────────────────────
 
+def _hiyori_provider_enabled(db: Session) -> bool:
+    """The audit talks to hiyori.cz for its own reason — "is this series
+    planned or revived" — and built its scraper straight from the credentials
+    in ``app_settings``, where no enabled flag lives. The switch in the UI sets
+    the registry row, so that is what has to be asked."""
+    from .connections import provider_enabled
+    return provider_enabled(db, "hiyori")
+
+
 def _hiyori_check_due(series: Series, db: Session) -> bool:
+    if not _hiyori_provider_enabled(db):
+        return False
     interval_hours = float(_rs("audit_hiyori_check_interval_hours", db) or "24")
     last = _to_aware(series.last_hiyori_check_at)
     if last is None:

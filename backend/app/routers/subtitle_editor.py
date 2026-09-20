@@ -10,6 +10,7 @@ touching the disk, so the editor can preview a change, undo it, and save once �
 a round trip per keystroke would be both slow and impossible to undo.
 """
 from __future__ import annotations
+import math
 import os
 import re
 from typing import Any
@@ -264,17 +265,45 @@ ops = APIRouter(prefix="/api/subtitle-editor/ops", tags=["subtitle-editor"],
                 dependencies=[Depends(get_current_user)])
 
 
+def _check_times(lines) -> None:
+    """Cue times have to be real, finite numbers before any maths runs.
+
+    They arrive as untyped JSON: ``"1.5"`` reached the arithmetic and came back
+    as a 500 naming nothing, and NaN survived every operation to land in the
+    file as ``00:00:00,000`` — a subtitle silently rewritten to nothing. The
+    check lives here rather than in a pydantic validator because FastAPI echoes
+    the rejected input in its 422 body, and a body holding ``inf`` cannot be
+    serialised at all.
+    """
+    for i, cue in enumerate(lines):
+        if not isinstance(cue, dict):
+            raise ValueError(f"titulek {i + 1}: očekáván objekt")
+        for key in ("start", "end"):
+            value = cue.get(key)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"titulek {i + 1}: '{key}' musí být číslo")
+            if not math.isfinite(value):
+                raise ValueError(f"titulek {i + 1}: '{key}' není konečné číslo")
+
+
 def _guard(fn, *args, **kwargs):
     """A rejected edit is the user's mistake to correct, not a server fault."""
+    if args and isinstance(args[0], list):
+        try:
+            _check_times(args[0])
+        except ValueError as exc:
+            raise HTTPException(400, f"Neplatná data titulků: {exc}")
     try:
         return fn(*args, **kwargs)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, f"Neplatná data titulků: {exc}")
 
 
 @ops.post("/analyze")
 def op_analyze(body: _Cues):
-    return subtitle_ops.analyze(body.lines)
+    return _guard(subtitle_ops.analyze, body.lines)
 
 
 @ops.post("/fix")
