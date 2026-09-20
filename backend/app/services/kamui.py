@@ -467,7 +467,10 @@ class KamuiScraper:
 
         # If it's a RAR archive, extract subtitle using the site password
         if raw[:4] == b"Rar!":
-            log.debug("Kamui: extrahuju RAR (heslo=%r)", self.rar_password)
+            # Never the password itself: debug logs get pasted into chats and
+            # issue reports, and this one unlocks the provider account.
+            log.debug("Kamui: extrahuju RAR (heslo %s)",
+                      "nastaveno" if self.rar_password else "chybí")
             sub_bytes, _ = extract_rar_subtitle(raw, self.rar_password)
             return sub_bytes
 
