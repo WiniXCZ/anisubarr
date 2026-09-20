@@ -8,7 +8,7 @@ import logging
 import time
 import httpx
 from bs4 import BeautifulSoup
-from urllib.parse import urlencode, urlparse, parse_qs
+from urllib.parse import urlencode, urljoin, urlparse, parse_qs
 
 log = logging.getLogger("anisubarr.hns")
 
@@ -133,24 +133,39 @@ class HnsScraper:
             payload[pass_field] = self.password
             log.debug("HNS: přihlašuji se jako '%s' přes pole '%s'", self.username, user_field)
 
-            action = form.get("action", LOGIN_URL)
+            # action="" means "post to this same page", but `.get(key, default)`
+            # only falls back when the attribute is absent — an empty one came
+            # through as "" and the login went to wherever BASE_URL + "" lands.
+            # urljoin also handles a relative action that BASE_URL + action
+            # would have glued into "https://hns.sklogin/".
+            action = form.get("action") or LOGIN_URL
             if not action.startswith("http"):
-                action = BASE_URL + action
+                action = urljoin(LOGIN_URL, action)
 
             time.sleep(1)
             r2 = self._post(c, action, data=payload)
             r2.raise_for_status()
 
-            final_url = str(r2.url).rstrip("/")
-            if LOGIN_URL.rstrip("/") in final_url:
-                # Still on login page — check if it's actually showing logged-in state
-                text_lower = r2.text.lower()
-                if "odhl" not in text_lower and "logout" not in text_lower and "odhlas" not in text_lower:
-                    log.error("HNS: přihlášení selhalo, final_url=%s", final_url)
-                    raise PermissionError(f"hns.sk: přihlášení selhalo pro '{self.username}'")
+            # Being logged in is what has to be proved. The check used to run
+            # only while the response was still on the login page, so a redirect
+            # anywhere else — an error page included — fell straight through to
+            # the success log, and every search after it ran anonymously.
+            if not self._is_logged_in(r2.text):
+                final_url = str(r2.url).rstrip("/")
+                log.error("HNS: přihlášení selhalo, final_url=%s", final_url)
+                raise PermissionError(
+                    f"hns.sk: přihlášení selhalo pro '{self.username}' — "
+                    f"odpověď z {final_url} nevypadá jako přihlášený uživatel "
+                    f"(POST šel na {action})"
+                )
 
             self._cookies = {ck.name: ck.value for ck in c.cookies.jar}
             log.info("HNS: přihlášení OK")
+
+    @staticmethod
+    def _is_logged_in(html: str) -> bool:
+        text_lower = html.lower()
+        return "odhl" in text_lower or "logout" in text_lower
 
     # ── Search ────────────────────────────────────────────────────────
 

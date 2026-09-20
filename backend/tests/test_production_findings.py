@@ -205,3 +205,66 @@ def test_the_healthcheck_is_kept_out_of_the_log():
 
     assert drop.filter(line('GET /api/health HTTP/1.1" 200')) is False
     assert drop.filter(line('GET /api/series HTTP/1.1" 200')) is True
+
+
+# ── HnS carried the same login bug as Kamui ──────────────────────────────────
+
+def _hns_login(form_html, response_html, response_url):
+    from app.services import hns as hns_mod
+
+    scraper = hns_mod.HnsScraper("uzivatel", "heslo")
+    client = MagicMock()
+    posted = {}
+
+    get_resp = MagicMock(text=form_html, url=hns_mod.LOGIN_URL)
+    get_resp.raise_for_status = lambda: None
+
+    def _post(self, _c, url, data=None, **kw):
+        posted["url"] = url
+        r = MagicMock(text=response_html, url=response_url)
+        r.raise_for_status = lambda: None
+        return r
+
+    with patch.object(hns_mod.HnsScraper, "_make_client",
+                      lambda self: MagicMock(__enter__=lambda s: client,
+                                             __exit__=lambda *a: None)), \
+         patch.object(hns_mod.HnsScraper, "_get", lambda self, c, url, **kw: get_resp), \
+         patch.object(hns_mod.HnsScraper, "_post", _post), \
+         patch.object(hns_mod.time, "sleep", lambda *_: None):
+        scraper._login_impl()
+    return posted
+
+
+_HNS_FORM = ('<form action="" method="post">'
+             '<input name="username"><input name="password" type="password">'
+             '</form>')
+
+
+def test_hns_posts_the_login_to_the_login_page():
+    """BASE_URL + "" is the site root, and BASE_URL + "login/" would have been
+    glued into "https://hns.sklogin/"."""
+    posted = _hns_login(_HNS_FORM, "<a>Odhlásiť</a>", "https://hns.sk/")
+    assert "login" in posted["url"], posted["url"]
+
+
+def test_hns_does_not_call_a_redirect_to_an_error_page_a_success():
+    """The failure check only ran while the response was still on the login
+    page, so a redirect anywhere else fell through to "přihlášení OK"."""
+    with pytest.raises(PermissionError):
+        _hns_login(_HNS_FORM, "<p>Nesprávne heslo</p>", "https://hns.sk/chyba")
+
+
+# ── one answer to "is this provider on" ──────────────────────────────────────
+
+def test_the_scraper_factory_and_the_audit_agree_a_disabled_provider_is_off(db):
+    """The check used to exist twice — once for the scrapers, once in the audit
+    — which is how a provider switched off in the UI kept being called."""
+    from app.routers.subtitles import _provider_enabled
+    from app.services import audit
+
+    session, _ = db
+    session.add(Service(name="Hiyori (test)", type="hiyori", enabled=False))
+    session.commit()
+
+    assert _provider_enabled("hiyori", session) is False
+    assert audit._hiyori_check_due(_series(db), session) is False

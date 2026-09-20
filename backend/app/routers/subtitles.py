@@ -116,15 +116,15 @@ def _provider_creds(provider: str, db=None) -> tuple[str, str, str]:
 
 
 def _provider_enabled(provider: str, db=None) -> bool:
-    """False when the provider exists in the registry but is switched off."""
+    """False when the provider exists in the registry but is switched off.
+
+    Without a session there is nothing to ask, so the answer stays True — the
+    factories that matter (the nightly run, the audit) all have one.
+    """
     if db is None:
         return True
-    try:
-        from ..models.service import Service
-        row = db.query(Service).filter(Service.type == provider).first()
-        return bool(row.enabled) if row else True
-    except Exception:
-        return True
+    from ..services.connections import provider_enabled
+    return provider_enabled(db, provider)
 
 
 def _hiyori(db=None) -> HiyoriScraper | None:
