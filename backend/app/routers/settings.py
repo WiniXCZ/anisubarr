@@ -88,10 +88,15 @@ EDITABLE_KEYS: set[str] = {
     "subtitle_common_fixes",           # bool — collapse whitespace, trailing spaces
     # ── alass sync settings ───────────────────────────────────────────
     # (auto_alass_on_download already listed below, in the post-download-actions group)
-    "alass_use_audio_reference",       # bool — use audio track as sync reference
-    "alass_no_fix_framerate",          # bool — skip framerate mismatch correction
-    "alass_golden_section_search",     # bool — use golden-section search
-    "alass_max_offset_seconds",        # int  — max allowed timing offset (default 60)
+    # Checked against `alass --help` (alass-cli 2.0.0, the version in the
+    # image). Two settings that used to live here — alass_golden_section_search
+    # and alass_max_offset_seconds — named switches alass does not have, and
+    # alass_use_audio_reference was moot: the reference is built from an
+    # embedded track or the audio, whichever the video turns out to have.
+    "alass_no_fix_framerate",          # bool  → --disable-fps-guessing
+    "alass_no_split",                  # bool  → --no-split (keep one offset for the whole file)
+    "alass_split_penalty",             # float → --split-penalty (alass calls 1–20 the useful range)
+    "alass_speed_optimization",        # float → --speed-optimization
     # ── AI provider order & enabled state ───────────────────────────────────────
     "ai_provider_order",               # JSON — [{id,enabled},...] priority + on/off per provider
     # ── Provider priority & behaviour ────────────────────────────────────
@@ -154,6 +159,15 @@ EDITABLE_KEYS: set[str] = {
     "auto_subtitle_search_on_grab",    # bool — auto-search subtitles after Sonarr grab (default false)
     "auto_promote_check_on_sync",      # bool — check promotion eligibility after Sonarr sync (default true)
     "auto_seerr_issue_on_error",       # bool — auto-report Seerr issue on subtitle error (default false)
+    # ── Vypínače úloh ──────────────────────────────────────────────────────────
+    "audit_enabled",                   # bool — spouštět audit titulků vůbec
+    "langcheck_enabled",               # bool — spouštět kontrolu jazyka
+    "audit_hiyori_check_interval_hours",
+    "audit_tail_high_tolerance_days",
+    "audit_tail_low_max_episodes",
+    "audit_tail_low_tolerance_days",
+    "auto_translate_description",      # bool — přeložit popis seriálu po přidání
+    "emby_server_kind",                # str  — emby / jellyfin
     # ── Údržba databáze ────────────────────────────────────────────────────────
     "audit_log_retention_days",        # int  — jak dlouho držet záznamy v logu seriálů (výchozí 90)
     "audit_log_detail_retention_days", # int  — po kolika dnech zahodit objemné detaily hledání (výchozí 14)

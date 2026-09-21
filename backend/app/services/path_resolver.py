@@ -189,6 +189,26 @@ def _under_prefix(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + "/")
 
 
+# Which complaints the log has already heard. A library sweep resolves every
+# episode, so a warning written per path arrives 739 times and buries whatever
+# else happened. The interesting unit is the root that has no rule, not the
+# file under it.
+_warned: set[str] = set()
+
+
+def _root_of(path: str) -> str:
+    """The first two components — enough to tell one library root from another."""
+    parts = [p for p in path.replace("\\", "/").split("/") if p]
+    return "/".join(parts[:2])
+
+
+def _warn_once(key: str, message: str, *args) -> None:
+    if key in _warned:
+        return
+    _warned.add(key)
+    log.warning(message, *args)
+
+
 def resolve(sonarr_path: str) -> str:
     """
     Convert a Sonarr-side path to a locally accessible path.
@@ -213,8 +233,19 @@ def resolve(sonarr_path: str) -> str:
         local_prefix  = _cfg_value("path_local_prefix",  cfg.path_local_prefix  or "").rstrip("/\\")
 
     if not sonarr_prefix or not local_prefix:
-        # No mapping configured — return as-is and hope for the best
-        log.warning("PATH_SONARR_PREFIX / PATH_LOCAL_PREFIX not set; using Sonarr path as-is")
+        # This path matched no rule. Saying the prefixes "are not set" was
+        # actively misleading once path_mappings existed: mapping was working,
+        # and the warning claimed the opposite 739 times in a single pass. What
+        # is true is narrower — this one root has no rule — and it is worth
+        # saying once per root rather than once per file.
+        rules = len(mappings())
+        _warn_once(
+            f"unmapped:{_root_of(normalised_in)}",
+            "cesta %s nespadá pod žádné pravidlo mapování (%s) — používám ji, "
+            "jak přišla ze Sonarru",
+            sonarr_path,
+            f"{rules} pravidel" if rules else "žádná nejsou nastavená",
+        )
         return sonarr_path
 
     # Normalise the sonarr path to forward slashes for comparison
@@ -222,7 +253,10 @@ def resolve(sonarr_path: str) -> str:
 
     sonarr_prefix_norm = sonarr_prefix.replace("\\", "/").rstrip("/")
     if not _under_prefix(normalised, sonarr_prefix_norm):
-        log.warning(f"Sonarr path '{sonarr_path}' does not start with prefix '{sonarr_prefix}'")
+        _warn_once(
+            f"outside:{_root_of(normalised)}:{sonarr_prefix_norm}",
+            "cesta %s nezačíná předponou %s — používám ji beze změny",
+            sonarr_path, sonarr_prefix)
         return sonarr_path
 
     # Strip the Sonarr prefix, keep the rest

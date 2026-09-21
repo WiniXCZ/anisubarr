@@ -794,11 +794,11 @@ def check_and_demote_issues(db: Session) -> list[dict]:
 def fix_wrongly_promoted(db: Session, notify: bool = True) -> list[dict]:
     """
     Scan all promoted series and apply _should_demote logic:
-      "demote"    → set promoted=False, has_issue=True
-      "flag_only" → set has_issue=True, leave promoted=True (1 bad ep or fresh tail)
-      "ok"        → no change (clears a stale has_issue flag if present)
+      "demote" / "flag_only" → set has_issue=True, leave promoted alone
+      "ok"                   → no change (clears a stale has_issue flag)
 
-    Does NOT call Sonarr — only updates the DB.
+    Does NOT call Sonarr — only updates the DB, which is exactly why it no
+    longer clears ``promoted``: see the note in the loop below.
 
     notify=False suppresses all Discord notifications (use at startup to avoid
     sending messages on every backend restart).
@@ -820,61 +820,52 @@ def fix_wrongly_promoted(db: Session, notify: bool = True) -> list[dict]:
                 db.commit()
             continue
 
-        if verdict == "demote":
-            s.promoted  = False
-            s.has_issue = True
-            db.commit()
-            log.info(
-                "fix_wrongly_promoted: demoted %r (id=%d) — %s",
-                s.title, s.id, reason,
-            )
-            results.append({
-                "action":    "demoted",
-                "series_id": s.id,
-                "title":     s.title,
-                "reason":    reason,
-            })
-            if notify:
-                try:
-                    from . import discord as discord_svc
-                    discord_svc.notify_demoted(
-                        title=s.title,
-                        series_id=s.id,
-                        poster_url=getattr(s, "poster_url", None),
-                        db=db,
-                    )
-                except Exception:
-                    pass
-        else:  # flag_only
-            if not s.has_issue:
-                s.has_issue = True
-                db.commit()
-                log.info(
-                    "fix_wrongly_promoted: flagged %r (id=%d) — %s",
-                    s.title, s.id, reason,
+        # "demote" and "flag_only" do the same thing here, and deliberately.
+        #
+        # This sweep cannot move anything — it never calls Sonarr. Clearing
+        # `promoted` while the folder stays in anime_series left the two
+        # disagreeing, and check_and_promote() reads the folder first: it saw
+        # the series sitting in the target root and set `promoted` back,
+        # "regardless of subtitle status". So every run demoted the same shows
+        # again and sent the same Discord notice again, while on disk nothing
+        # ever happened. It was 25 series on 21. 9., all within five seconds.
+        #
+        # Flagging says the same thing without the contradiction: the issue is
+        # recorded, the notice goes out once on the way in, and it stays put.
+        # Moving the folder belongs to the paths that can actually move it —
+        # the scheduled sweep in _demote_by_subtitle_coverage(), which calls
+        # Sonarr, and force_demote() when someone decides by hand.
+        if s.has_issue:
+            continue        # already flagged — say it once, not every run
+
+        s.has_issue = True
+        db.commit()
+        log.info(
+            "fix_wrongly_promoted: označeno %r (id=%d) — %s "
+            "(verdikt %s; složkou nehýbu, na to je ruční degradace)",
+            s.title, s.id, reason, verdict,
+        )
+        results.append({
+            "action":    "issue_flagged",
+            "series_id": s.id,
+            "title":     s.title,
+            "reason":    reason,
+        })
+        if notify:
+            try:
+                from . import discord as discord_svc
+                discord_svc.notify_issue_flagged(
+                    title=s.title,
+                    series_id=s.id,
+                    poster_url=getattr(s, "poster_url", None),
+                    db=db,
                 )
-                results.append({
-                    "action":    "issue_flagged",
-                    "series_id": s.id,
-                    "title":     s.title,
-                    "reason":    reason,
-                })
-                if notify:
-                    try:
-                        from . import discord as discord_svc
-                        discord_svc.notify_issue_flagged(
-                            title=s.title,
-                            series_id=s.id,
-                            poster_url=getattr(s, "poster_url", None),
-                            db=db,
-                        )
-                    except Exception:
-                        pass
+            except Exception:
+                pass
 
     if results:
-        demoted = sum(1 for r in results if r["action"] == "demoted")
         flagged = sum(1 for r in results if r["action"] == "issue_flagged")
-        log.info("fix_wrongly_promoted: %d demoted, %d flagged", demoted, flagged)
+        log.info("fix_wrongly_promoted: %d označeno", flagged)
     else:
         log.info("fix_wrongly_promoted: all promoted series OK — nothing changed")
     return results

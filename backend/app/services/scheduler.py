@@ -654,6 +654,38 @@ def job_ollama_translate():
 # Registry: job_id → (fn, default_interval, default_hour, name, description)
 # ──────────────────────────────────────────
 
+def job_import_subtitles_from_disk():
+    """Record the subtitles that are already on the disk.
+
+    The opposite direction to reconcile, and the one that was missing: the
+    table held 564 rows while the library held 13 533 Czech subtitle files.
+    Everything that reads the table rather than scanning the folder — promotion,
+    the dashboard, what to download next — was working off 4 % of reality.
+    """
+    from ..database import SessionLocal
+    from .subtitle_import import import_from_disk
+
+    db = SessionLocal()
+    try:
+        report = import_from_disk(db)
+    finally:
+        db.close()
+
+    parts = [f"{report['added']} nových záznamů"]
+    if report["by_language"]:
+        parts.append(", ".join(f"{code}: {n}"
+                               for code, n in report["by_language"].items()))
+    if report["untagged"]:
+        parts.append(f"{report['untagged']} bez jazykové značky (nepřidáno)")
+    if report["unreachable"]:
+        parts.append(f"{report['unreachable']} seriálů nedosažitelných")
+
+    from . import job_log
+    run_id = job_log.current_run_id("import_subtitles_from_disk")
+    if run_id:
+        job_log.update_message(run_id, ", ".join(parts))
+
+
 def job_reconcile_subtitles():
     """Bring the subtitles table back in line with the disk.
 
@@ -675,7 +707,9 @@ def job_reconcile_subtitles():
 
     parts = [f"{report['ok']} v pořádku"]
     if report["repaired"]:
-        parts.append(f"{report['repaired']} opraveno")
+        moved = report.get("followed_move") or 0
+        parts.append(f"{report['repaired']} opraveno"
+                     + (f" (z toho {moved} po přesunu seriálu)" if moved else ""))
     if report["deleted"]:
         parts.append(f"{report['deleted']} fantomů smazáno")
     elif report["missing"]:
@@ -828,6 +862,14 @@ JOB_REGISTRY: dict[str, dict] = {
         "interval":    "daily",
         "hour":        4,
         "minute":      0,
+    },
+    "import_subtitles_from_disk": {
+        "fn":          job_import_subtitles_from_disk,
+        "name":        "Načtení titulků z disku",
+        "description": "Projde knihovnu a doplní záznamy pro titulky, které leží u videí, ale databáze o nich neví",
+        "interval":    "daily",
+        "hour":        4,
+        "minute":      50,
     },
     "reconcile_subtitles": {
         "fn":          job_reconcile_subtitles,

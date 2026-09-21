@@ -20,17 +20,7 @@ def extract_subtitle_bytes(raw_bytes: bytes, rar_password: str | None = None) ->
     Returns extension without leading dot ('srt' or 'ass').
     """
     if raw_bytes[:2] == b"PK":
-        buf = io.BytesIO(raw_bytes)
-        try:
-            with zipfile.ZipFile(buf) as zf:
-                for name in zf.namelist():
-                    ext_lower = os.path.splitext(name)[1].lower()
-                    if ext_lower in (".srt", ".ass", ".ssa"):
-                        data = zf.read(name)
-                        return data, ext_lower.lstrip(".")
-        except zipfile.BadZipFile:
-            pass
-        raise ValueError("ZIP archiv neobsahuje žádný SRT/ASS soubor")
+        return extract_zip_subtitle(raw_bytes, rar_password)
 
     if raw_bytes[:4] == b"Rar!":
         return extract_rar_subtitle(raw_bytes, rar_password)
@@ -45,6 +35,81 @@ def extract_subtitle_bytes(raw_bytes: bytes, rar_password: str | None = None) ->
     return raw_bytes, "srt"
 
 
+_SUB_EXTS = (".srt", ".ass", ".ssa")
+
+
+def _pick_subtitle(names: list[str]) -> str | None:
+    """The subtitle inside an archive, preferring the richer format.
+
+    An archive often carries the same episode twice — signs and songs as .ass
+    beside a plain .srt — and macOS resource forks ride along in a __MACOSX
+    folder, where the copy is a few hundred bytes of nothing.
+    """
+    candidates = [n for n in names
+                  if os.path.splitext(n)[1].lower() in _SUB_EXTS
+                  and not os.path.basename(n).startswith("._")
+                  and "__MACOSX" not in n]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda n: (os.path.splitext(n)[1].lower() != ".ass", n))
+    return candidates[0]
+
+
+def extract_zip_subtitle(raw_bytes: bytes,
+                         password: str | None = None) -> tuple[bytes, str]:
+    """Extract a subtitle from a ZIP archive, encrypted or not.
+
+    Kamui switched from RAR to ZIP and kept the site-wide password, so the
+    archive arrived, matched no branch, and was written to disk as a ``.ass``
+    file that was really an encrypted archive: every download looked like a
+    success and no player could read one.
+
+    ZIP encryption comes in two incompatible flavours. The legacy ZipCrypto is
+    what the standard library can open; WinZip AES is not, and it raises
+    something different depending on the version, so the AES reader is tried
+    whenever the plain one refuses. ``pyzipper`` reads both, but it stays
+    optional — an install without it still handles the legacy kind.
+    """
+    buf = io.BytesIO(raw_bytes)
+    try:
+        with zipfile.ZipFile(buf) as zf:
+            name = _pick_subtitle(zf.namelist())
+            if not name:
+                raise ValueError("ZIP archiv neobsahuje žádný SRT/ASS soubor")
+            encrypted = any(info.flag_bits & 0x1 for info in zf.infolist())
+            if not encrypted:
+                return zf.read(name), os.path.splitext(name)[1].lower().lstrip(".")
+            if not password:
+                raise ValueError(
+                    "ZIP archiv je zaheslovaný a heslo není nastavené "
+                    "(Nastavení → kamui_rar_password)")
+            try:
+                zf.setpassword(password.encode())
+                return zf.read(name), os.path.splitext(name)[1].lower().lstrip(".")
+            except (RuntimeError, NotImplementedError) as exc:
+                log.debug("ZIP: standardní knihovna archiv neotevřela (%s), zkouším AES", exc)
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"Poškozený ZIP archiv: {exc}")
+
+    # ── WinZip AES ────────────────────────────────────────────────────────
+    try:
+        import pyzipper
+    except ImportError:
+        raise ValueError(
+            "ZIP archiv používá šifrování AES. Nainstaluj 'pyzipper' "
+            "(pip install pyzipper), nebo si archiv rozbal ručně.")
+    try:
+        with pyzipper.AESZipFile(io.BytesIO(raw_bytes)) as zf:
+            name = _pick_subtitle(zf.namelist())
+            if not name:
+                raise ValueError("ZIP archiv neobsahuje žádný SRT/ASS soubor")
+            zf.setpassword((password or "").encode())
+            return zf.read(name), os.path.splitext(name)[1].lower().lstrip(".")
+    except RuntimeError as exc:
+        # Wrong password reads as a RuntimeError with a message worth keeping.
+        raise ValueError(f"ZIP archiv se nepodařilo rozbalit: {exc}")
+
+
 def extract_rar_subtitle(raw_bytes: bytes, password: str | None = None) -> tuple[bytes, str]:
     """Extract a subtitle file from a RAR archive (optionally password-protected).
 
@@ -52,8 +117,6 @@ def extract_rar_subtitle(raw_bytes: bytes, password: str | None = None) -> tuple
     Returns (subtitle_bytes, extension) without leading dot.
     Raises ValueError if extraction fails or no SRT/ASS found.
     """
-    _SUB_EXTS = (".srt", ".ass", ".ssa")
-
     # Write to a temp file — both rarfile and 7z need a file path
     with tempfile.NamedTemporaryFile(suffix=".rar", delete=False) as tmp:
         tmp.write(raw_bytes)

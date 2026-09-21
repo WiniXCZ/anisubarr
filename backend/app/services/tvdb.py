@@ -66,10 +66,29 @@ def lookup_tvdb_id_by_anilist(anilist_id: int, api_key: str, pin: str = "") -> i
                     if item.get("type") == "series":
                         tvdb_id = item.get("tvdb_id") or item.get("id")
                         if tvdb_id:
-                            return int(str(tvdb_id).lstrip("series-"))
+                            return _tvdb_numeric_id(tvdb_id)
     except Exception as exc:
         log.debug("TVDB anilist lookup failed for %s: %s", anilist_id, exc)
     return None
+
+
+def _tvdb_numeric_id(value) -> int | None:
+    """The numeric part of a TVDB id, which arrives as 12345 or "series-12345".
+
+    This used to be ``int(str(value).lstrip("series-"))``, and lstrip strips
+    *characters*, not a prefix: it eats every leading s, e, r, i and dash it
+    finds. "series-12345" happens to survive because a digit stops it, but an
+    id that legitimately began with one of those letters would be quietly
+    mutilated, and so would a plain "5" after a "series-" that was never there.
+    """
+    text = str(value).strip()
+    if text.startswith("series-"):
+        text = text[len("series-"):]
+    try:
+        return int(text)
+    except ValueError:
+        log.debug("TVDB: id %r není číslo", value)
+        return None
 
 
 def lookup_tvdb_id_by_title(title: str, year: int | None, api_key: str, pin: str = "") -> int | None:
@@ -90,7 +109,7 @@ def lookup_tvdb_id_by_title(title: str, year: int | None, api_key: str, pin: str
                     item = results[0]
                     tvdb_id = item.get("tvdb_id") or item.get("id")
                     if tvdb_id:
-                        return int(str(tvdb_id).lstrip("series-"))
+                        return _tvdb_numeric_id(tvdb_id)
     except Exception as exc:
         log.debug("TVDB title lookup failed for %r: %s", title, exc)
     return None

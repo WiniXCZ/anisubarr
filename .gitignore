@@ -61,3 +61,8 @@ dashboard_*.yaml
 check2_result.txt
 health_result.txt
 _write_test_tmp.txt
+
+# Auto-generated signing key (config.py writes it next to the DB when
+# JWT_SECRET is unset). It is a live credential — never commit one.
+jwt_secret
+**/jwt_secret

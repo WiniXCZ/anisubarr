@@ -106,6 +106,25 @@ def resolve_provider(db: Session, provider: str) -> tuple[str, str, str]:
     )
 
 
+# What the log has already been told about each provider. The check runs once
+# per episode inside a loop that wakes every ten minutes, so saying "vypnutý —
+# přeskakuji" on every call wrote 105 lines per pass and drowned everything
+# else: 420 of 550 lines in a forty-minute sample. The state is what matters,
+# not the count, so the line goes out when the answer changes and then stops.
+_reported_state: dict[str, bool] = {}
+
+
+def _say_once(provider: str, enabled: bool) -> None:
+    if _reported_state.get(provider) == enabled:
+        return
+    _reported_state[provider] = enabled
+    if enabled:
+        log.info("[connections] %s je zapnutý", provider)
+    else:
+        log.info("[connections] %s je vypnutý — přeskakuji (dokud se to nezmění)",
+                 provider)
+
+
 def provider_enabled(db: Session, provider: str) -> bool:
     """Is this subtitle provider switched on?
 
@@ -134,8 +153,9 @@ def provider_enabled(db: Session, provider: str) -> bool:
     if row is None:
         return True
     if not row.enabled:
-        log.info("[connections] %s je vypnutý — přeskakuji", provider)
+        _say_once(provider, False)
         return False
+    _say_once(provider, True)
     return True
 
 

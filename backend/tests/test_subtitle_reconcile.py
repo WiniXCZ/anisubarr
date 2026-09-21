@@ -188,3 +188,69 @@ def test_deleting_a_phantom_recounts_the_series(library):
     assert report["deleted"] == 1
     db.refresh(series)
     assert series.cached_cs_sub_count == 0
+
+
+# ── the series moved between library roots ───────────────────────────────────
+
+def test_a_row_follows_its_series_to_the_new_root(library):
+    """A promoted series moves out of incomplete_anime and its subtitle rows
+    keep pointing at the old root. The folder there is gone, so the rows were
+    written off as unreachable and skipped forever — 100 false "has subtitles"
+    that nothing would ever replace."""
+    db, ep, season = library
+    sub = _row(db, ep, "Show - S01E01.cs.srt")
+    sub.file_path = "/data/incomplete/Season 01/Show - S01E01.cs.srt"
+    ep.file_path = "/data/anime/Season 01/Show - S01E01.mkv"
+    db.commit()
+    _drop(season, "Show - S01E01.cs.srt")
+
+    report = reconcile(db, episode_ids=[ep.id])
+
+    assert report["repaired"] == 1 and report["followed_move"] == 1
+    assert report["unreachable"] == 0
+    assert sub.file_path == "/data/anime/Season 01/Show - S01E01.cs.srt"
+
+
+def test_the_move_also_finds_a_converted_file(library):
+    db, ep, season = library
+    sub = _row(db, ep, "Show - S01E01.cs.ass", fmt="ass")
+    sub.file_path = "/data/incomplete/Season 01/Show - S01E01.cs.ass"
+    ep.file_path = "/data/anime/Season 01/Show - S01E01.mkv"
+    db.commit()
+    _drop(season, "Show - S01E01.cs.srt")
+
+    reconcile(db, episode_ids=[ep.id])
+
+    assert sub.file_path == "/data/anime/Season 01/Show - S01E01.cs.srt"
+    assert sub.format == "srt"
+
+
+def test_gone_from_the_new_home_too_counts_as_missing(library):
+    """The video is reachable and the subtitle is not beside it. That is a real
+    answer, not a mount problem — 75 of the 100 were this."""
+    db, ep, season = library
+    sub = _row(db, ep, "Show - S01E01.cs.srt")
+    sub.file_path = "/data/incomplete/Season 01/Show - S01E01.cs.srt"
+    ep.file_path = "/data/anime/Season 01/Show - S01E01.mkv"
+    db.commit()
+    _drop(season, "neco-jineho.txt")
+
+    report = reconcile(db, episode_ids=[ep.id])
+
+    assert report["moved_missing"] == 1 and report["deleted"] == 1
+    assert db.query(Subtitle).filter(Subtitle.id == sub.id).first() is None
+
+
+def test_without_a_video_to_ask_the_row_is_still_left_alone(library):
+    """No episode path means no authority on where it moved — and an unmounted
+    share must not read as a deletion."""
+    db, ep, _ = library
+    sub = _row(db, ep, "Show - S01E01.cs.srt")
+    sub.file_path = "/data/anime/Season 99/Show - S99E01.cs.srt"
+    ep.file_path = None
+    db.commit()
+
+    report = reconcile(db, episode_ids=[ep.id])
+
+    assert report["unreachable"] == 1 and report["deleted"] == 0
+    assert db.query(Subtitle).filter(Subtitle.id == sub.id).first() is not None

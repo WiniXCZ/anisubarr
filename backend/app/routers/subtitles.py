@@ -31,6 +31,7 @@ from ..services.kamui import KamuiScraper
 from ..services.gensubs import GenSubsScraper
 from ..services.local_subs import LocalFolderScraper
 from ..services.subtitle_utils import extract_subtitle_bytes
+from ..services import subtitle_cleanup
 from ..services.scraper_limiter import RateLimitExceeded
 from ..services import local_subs, path_resolver
 
@@ -1099,7 +1100,6 @@ def delete_subtitles_bulk(
     _: User = Depends(get_current_user),
 ):
     """Delete multiple subtitle records (and their files) by ID."""
-    from .subtitle_sync import _unc_to_local
     subs = db.query(Subtitle).filter(Subtitle.id.in_(req.subtitle_ids)).all()
     for sub in subs:
         if sub.file_path and not sub.is_embedded:
@@ -1107,8 +1107,14 @@ def delete_subtitles_bulk(
                 local_path = _subtitle_local_path(sub)
                 if os.path.isfile(local_path):
                     os.remove(local_path)
-            except Exception:
-                pass
+            except Exception as exc:
+                # The row goes either way — but a file nobody can account for
+                # is how the table and the disk drift apart, so it is worth a
+                # line rather than a silent pass.
+                import logging
+                logging.getLogger("anisubarr.subtitles").warning(
+                    "[titulky] soubor %s se nepodařilo smazat: %s",
+                    sub.file_path, exc)
         db.delete(sub)
     db.commit()
 
@@ -1119,19 +1125,9 @@ def delete_subtitles_bulk(
 
 # Some subtitle sources store Czech as "cze", "ces", or "cz" instead of "cs".
 # When filtering by language we expand these aliases so nothing gets missed.
-_LANG_ALIASES: dict[str, set[str]] = {
-    "cs": {"cs", "cze", "ces", "cz"},
-    "en": {"en", "eng"},
-    "ja": {"ja", "jpn"},
-    "de": {"de", "ger", "deu"},
-    "fr": {"fr", "fre", "fra"},
-    "pl": {"pl", "pol"},
-    "sk": {"sk", "slk", "slo"},
-    "hu": {"hu", "hun"},
-    "ru": {"ru", "rus"},
-    "zh": {"zh", "chi", "zho"},
-    "ko": {"ko", "kor"},
-}
+# The table lives in utils — there used to be three of them, disagreeing, and
+# this copy knew nothing of Spanish, Italian, Portuguese or Romanian.
+from ..utils import LANGUAGE_VARIANTS as _LANG_ALIASES  # noqa: E402
 
 
 def _lang_variants(lang: str) -> list[str]:
@@ -1152,7 +1148,6 @@ def _apply_lang_filter(query, language: Optional[str]):
 
 def _delete_subs(db, subs) -> int:
     """Delete subtitle records and their files from disk. Returns count deleted."""
-    from .subtitle_sync import _unc_to_local
     deleted = 0
     for sub in subs:
         if sub.file_path and not sub.is_embedded:
@@ -1160,8 +1155,14 @@ def _delete_subs(db, subs) -> int:
                 local_path = _subtitle_local_path(sub)
                 if os.path.isfile(local_path):
                     os.remove(local_path)
-            except Exception:
-                pass
+            except Exception as exc:
+                # The row goes either way — but a file nobody can account for
+                # is how the table and the disk drift apart, so it is worth a
+                # line rather than a silent pass.
+                import logging
+                logging.getLogger("anisubarr.subtitles").warning(
+                    "[titulky] soubor %s se nepodařilo smazat: %s",
+                    sub.file_path, exc)
         db.delete(sub)
         deleted += 1
     db.commit()
@@ -1255,12 +1256,13 @@ def delete_subtitle(
     # Delete the actual file from disk (UNC → drive letter on Windows)
     if sub.file_path and not sub.is_embedded:
         try:
-            from .subtitle_sync import _unc_to_local
             local_path = _subtitle_local_path(sub)
             if os.path.isfile(local_path):
                 os.remove(local_path)
-        except Exception:
-            pass  # Don't fail DB delete if file removal fails
+        except Exception as exc:
+            import logging
+            logging.getLogger("anisubarr.subtitles").warning(
+                "[titulky] soubor %s se nepodařilo smazat: %s", sub.file_path, exc)
     db.delete(sub)
     db.commit()
 
@@ -1431,7 +1433,8 @@ def delete_subtitle_file(
     _: User = Depends(get_current_user),
 ):
     """Delete a physical subtitle file from disk (not necessarily in DB).
-    Accepts both local paths and UNC paths (converted via _unc_to_local).
+    Accepts a path in any namespace — resolved the same way reads are, so a
+    path Sonarr wrote is found here too.
     """
     file_path = body.file_path
     if not file_path:
@@ -1442,8 +1445,7 @@ def delete_subtitle_file(
         raise HTTPException(400, "Lze mazat pouze soubory titulků")
 
     try:
-        from .subtitle_sync import _unc_to_local
-        local_path = _unc_to_local(file_path)
+        local_path = path_resolver.unc_to_local(path_resolver.resolve(file_path))
     except Exception:
         local_path = file_path
 
@@ -1648,6 +1650,23 @@ def _save_subtitle(ep: Episode, data: bytes, language: str, ext: str) -> str:
     if not data or len(data) < 10:
         raise HTTPException(400, "Stažený soubor titulku je prázdný — zkus jiný zdroj")
 
+    # Every download passes through here, so this is where the post-processing
+    # switches finally do something. They used to sit in the settings whitelist
+    # with nothing reading them: the user turned them on and the file was
+    # written exactly as it came off the provider.
+    try:
+        from ..database import SessionLocal as _SL
+        _db = _SL()
+        try:
+            data = subtitle_cleanup.clean(
+                data, ext, subtitle_cleanup.options_from_settings(_db))
+        finally:
+            _db.close()
+    except Exception as _exc:
+        import logging
+        logging.getLogger("anisubarr.subtitles").warning(
+            "[titulky] úprava po stažení přeskočena: %s", _exc)
+
     if ep.file_path:
         dest = path_resolver.subtitle_path_for(ep.file_path, language, ext)
         try:
@@ -1709,7 +1728,7 @@ def _subtitle_local_path(sub) -> str:
 
     Rows written before a path mapping existed hold Sonarr's own namespace
     (``/data/media/…``), and these three call sites used ``_unc_to_local``,
-    which is a Windows-only helper — on Linux it hands the path straight back.
+    a Windows-only helper — on Linux it hands the path straight back.
     So the file was looked for under a prefix this container never mounts, and
     410 subtitles that are on the disk read as missing. Resolving first is what
     the rest of the code already does, and it keeps working when the mount
@@ -1718,7 +1737,10 @@ def _subtitle_local_path(sub) -> str:
     try:
         return path_resolver.unc_to_local(path_resolver.resolve(sub.file_path))
     except Exception:
-        return _unc_to_local(sub.file_path)
+        # The fallback used to call _unc_to_local, which this module never
+        # imports — so the one branch meant to rescue a failed resolve raised
+        # NameError instead. The stored path is the honest answer here.
+        return sub.file_path or ""
 
 
 def _langcheck_after_download(db, sub) -> dict | None:

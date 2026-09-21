@@ -1,19 +1,23 @@
 """
 kamui-subs.cz scraper – Czech anime subtitles.
 
-Kamui distributes subtitle archives as password-protected RAR files.
-The RAR password is site-wide (stored in settings as kamui_rar_password).
+Kamui distributes subtitle archives as password-protected archives — ZIP
+today, RAR historically. The password is site-wide and the same for both
+(stored in settings as kamui_rar_password).
 """
 from __future__ import annotations
 
 import logging
 import os
+import re
 import time
+import unicodedata
 import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
-from .subtitle_utils import extract_rar_subtitle, detect_language_from_name
+from .subtitle_utils import (extract_rar_subtitle, extract_zip_subtitle,
+                             detect_language_from_name)
 
 log = logging.getLogger("anisubarr.kamui")
 
@@ -38,6 +42,63 @@ def _cookie_values(client) -> dict:
     already do. It could not show up before, because nobody ever got logged in.
     """
     return {ck.name: ck.value for ck in client.cookies.jar}
+
+
+def _slugify(text: str) -> str:
+    """A title as it appears in a URL: ascii, lowercase, dashes between words.
+
+    The old version replaced spaces, colons and apostrophes and left everything
+    else — so an em dash, a diacritic or a bracket went into the URL as-is and
+    the request 404'd on a page that may well exist under a clean slug.
+    """
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.lower().replace("&", " and ")
+    # An apostrophe closes up rather than splitting: sites file "Journey's End"
+    # as journeys-end, not journey-s-end.
+    text = text.replace("'", "").replace("\u2019", "")
+    text = re.sub(r"[^a-z0-9]+", "-", text)
+    return text.strip("-")
+
+
+# Bits releases add that a subtitle site's slug usually doesn't carry.
+_TITLE_NOISE = re.compile(
+    r"\s*(?:\(\d{4}\)|\[[^\]]*\]|\b(?:season|series|part|cour)\s*\d+\b"
+    r"|\b(?:\d+(?:st|nd|rd|th)\s+season)\b)", re.IGNORECASE)
+
+
+def _slug_candidates(title: str) -> list[str]:
+    """Slugs worth trying for one title, best guess first.
+
+    Kamui has no search endpoint at all — /search, /hledani and /anime?q= all
+    return 404, and the only thing that resolves is /anime/<slug>. So the slug
+    is the whole game, and a title that needs more than one guess ("Frieren:
+    Beyond Journey's End" is not filed under its full name) was never found.
+    """
+    seen: list[str] = []
+
+    def _add(value: str) -> None:
+        slug = _slugify(value)
+        if slug and slug not in seen:
+            seen.append(slug)
+
+    title = title.strip()
+    _add(title)
+    _add(_TITLE_NOISE.sub("", title))
+
+    # Subtitle sites file a show under its short name far more often than under
+    # the full "Main Title: Long Subtitle" the metadata carries.
+    for separator in (":", " - ", " – ", " — "):
+        if separator in title:
+            head, _, tail = title.partition(separator)
+            _add(head)
+            _add(tail)
+            break
+
+    # Every candidate costs a request to a site whose rate limits already cost
+    # an account once, so the list is short on purpose: the first two are the
+    # likely ones and the rest are a long shot.
+    return [slug for slug in seen if len(slug) >= 3][:4]
 
 
 class KamuiScraper:
@@ -301,55 +362,36 @@ class KamuiScraper:
             return results
 
     def _find_anime_url(self, c: httpx.Client, title: str, _log) -> str | None:
-        """Search for anime on kamui-subs.cz by title."""
-        # Try common search patterns
-        for search_path in ["/search", "/hledani", "/anime"]:
-            try:
-                r = self._get(c, BASE_URL + search_path, params={"q": title, "search": title, "query": title})
-                if r.status_code == 200:
-                    soup = BeautifulSoup(r.text, "html.parser")
-                    found = self._extract_anime_link(soup, title)
-                    if found:
-                        return found
-            except Exception as e:
-                log.debug("Kamui search path %s: %s", search_path, e)
+        """Find the anime's page. Kamui has no search, so this guesses the slug.
+
+        It used to ask /search, /hledani and /anime?q= first. All three answer
+        404 — every search spent three requests on a site whose rate limits
+        already cost an account once, and learnt nothing. What does resolve is
+        /anime/<slug>, so that is what gets tried, with more than one candidate
+        slug: a show filed under its short name was previously unreachable
+        forever.
+        """
+        tried: set[str] = set()
+
+        # One request per candidate, not three: /anime/<slug> is the only shape
+        # that resolves (it 301s to /<slug>/), so asking for /titulky/<slug>
+        # and /<slug> as well just spent two more requests to be told 404.
+        for slug in _slug_candidates(title):
+            url = f"{BASE_URL}/anime/{slug}"
+            if url in tried:
                 continue
-
-        # Try direct URL guess (slug from title)
-        slug = title.lower().replace(" ", "-").replace(":", "").replace("'", "")
-        for path in [f"/anime/{slug}", f"/titulky/{slug}", f"/{slug}"]:
+            tried.add(url)
             try:
-                r = self._get(c, BASE_URL + path)
-                if r.status_code == 200 and "404" not in r.text[:200]:
-                    return BASE_URL + path
-            except Exception:
-                pass
+                r = self._get(c, url)
+            except Exception as exc:
+                log.debug("Kamui: %s selhalo (%s)", url, exc)
+                continue
+            if r.status_code == 200 and "404" not in r.text[:200]:
+                _log(f"slug '{slug}' sedí")
+                return str(r.url) or url
 
+        _log(f"žádný ze slugů nesedí: {', '.join(_slug_candidates(title)) or '—'}")
         return None
-
-    def _extract_anime_link(self, soup: BeautifulSoup, title: str) -> str | None:
-        """Find the best matching anime link from a search results page."""
-        title_lower = title.lower()
-        best: tuple[int, str] | None = None
-
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            text = a.get_text(strip=True).lower()
-            # Score by title match
-            score = 0
-            if title_lower in text:
-                score = 10
-            elif any(w in text for w in title_lower.split() if len(w) > 3):
-                score = 5
-            if score == 0:
-                continue
-            # Prefer links that look like anime pages
-            if any(k in href for k in ("/anime/", "/titulky/", "/serial/")):
-                score += 3
-            if best is None or score > best[0]:
-                best = (score, urljoin(BASE_URL, href))
-
-        return best[1] if best else None
 
     def _find_episode_url(
         self,
@@ -492,16 +534,26 @@ class KamuiScraper:
 
             raw = r.content
 
-        # If it's a RAR archive, extract subtitle using the site password
+        # Never the password itself: debug logs get pasted into chats and issue
+        # reports, and this one unlocks the provider account.
+        have_password = "nastaveno" if self.rar_password else "chybí"
+
         if raw[:4] == b"Rar!":
-            # Never the password itself: debug logs get pasted into chats and
-            # issue reports, and this one unlocks the provider account.
-            log.debug("Kamui: extrahuju RAR (heslo %s)",
-                      "nastaveno" if self.rar_password else "chybí")
+            log.debug("Kamui: extrahuju RAR (heslo %s)", have_password)
             sub_bytes, _ = extract_rar_subtitle(raw, self.rar_password)
             return sub_bytes
 
-        # ZIP or plain text — return as-is (extract_subtitle_bytes handles it)
+        # Kamui serves ZIP now, and kept the site-wide password. Unpacking has
+        # to happen here because nobody downstream knows that password: the
+        # callers reach for extract_subtitle_bytes() without one, so an
+        # encrypted archive used to be written to disk as a .ass file that was
+        # really an archive — every download looked like it worked.
+        if raw[:2] == b"PK":
+            log.debug("Kamui: extrahuju ZIP (heslo %s)", have_password)
+            sub_bytes, _ = extract_zip_subtitle(raw, self.rar_password)
+            return sub_bytes
+
+        # Plain text — return as-is.
         return raw
 
     def _login_or_raise(self):

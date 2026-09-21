@@ -362,6 +362,70 @@ def _alass_or_fallback(local_video: str, cs_sub: str, alass_error: dict) -> dict
     }
 
 
+def _alass_flags() -> list[str]:
+    """Command-line options for alass, from the settings that mean something.
+
+    alass ran with no options at all while four settings claimed to steer it.
+    Checked against ``alass --help`` of the version in the image (alass-cli
+    2.0.0), only one of the four had a switch behind it:
+
+      * ``alass_no_fix_framerate``     → ``--disable-fps-guessing``
+      * ``alass_golden_section_search``  no such option exists
+      * ``alass_max_offset_seconds``     no such option exists
+      * ``alass_use_audio_reference``    moot — the reference is already built
+        from an embedded track or the audio, whichever the video has
+
+    The two that name nothing are gone from the settings rather than quietly
+    tolerated, and the genuinely useful options alass does have are exposed in
+    their place.
+    """
+    from ..database import SessionLocal
+    from ..utils.settings_helper import read_setting
+
+    values: dict[str, str] = {}
+    try:
+        db = SessionLocal()
+        try:
+            for key in ("alass_no_fix_framerate", "alass_no_split",
+                        "alass_split_penalty", "alass_speed_optimization"):
+                values[key] = (read_setting(key, db) or "").strip()
+        finally:
+            db.close()
+    except Exception as exc:
+        log.warning("alass: nastavení se nepodařilo načíst (%s) — jedu bez přepínačů", exc)
+        return []
+
+    def _get(key: str) -> str:
+        return values.get(key, "")
+
+    flags: list[str] = []
+    if _get("alass_no_fix_framerate").lower() in ("true", "1", "yes"):
+        flags.append("--disable-fps-guessing")
+    if _get("alass_no_split").lower() in ("true", "1", "yes"):
+        flags.append("--no-split")
+
+    penalty = _get("alass_split_penalty")
+    if penalty:
+        try:
+            # alass takes a percentage; its own docs call 1–20 the useful range.
+            value = float(penalty)
+            if 0 < value <= 1000:
+                flags += ["--split-penalty", f"{value:g}"]
+        except ValueError:
+            log.warning("alass: alass_split_penalty není číslo (%r) — ignoruji", penalty)
+
+    speed = _get("alass_speed_optimization")
+    if speed:
+        try:
+            value = float(speed)
+            if value > 0:
+                flags += ["--speed-optimization", f"{value:g}"]
+        except ValueError:
+            log.warning("alass: alass_speed_optimization není číslo (%r) — ignoruji", speed)
+
+    return flags
+
+
 def _run_alass(ep: Episode) -> dict:
     """
     Synchronise the CZ subtitle for *ep* using alass, with an automatic
@@ -454,8 +518,11 @@ def _run_alass(ep: Episode) -> dict:
     os.close(tmp_fd)
 
     try:
+        flags = _alass_flags()
+        if flags:
+            log.info("alass: přepínače %s", " ".join(flags))
         proc = subprocess.run(
-            [alass_bin, reference, cs_sub, tmp_path],
+            [alass_bin, *flags, reference, cs_sub, tmp_path],
             capture_output=True,
             text=True,
             encoding='utf-8',
