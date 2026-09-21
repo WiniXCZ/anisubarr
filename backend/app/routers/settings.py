@@ -154,6 +154,10 @@ EDITABLE_KEYS: set[str] = {
     "auto_subtitle_search_on_grab",    # bool — auto-search subtitles after Sonarr grab (default false)
     "auto_promote_check_on_sync",      # bool — check promotion eligibility after Sonarr sync (default true)
     "auto_seerr_issue_on_error",       # bool — auto-report Seerr issue on subtitle error (default false)
+    # ── Údržba databáze ────────────────────────────────────────────────────────
+    "audit_log_retention_days",        # int  — jak dlouho držet záznamy v logu seriálů (výchozí 90)
+    "audit_log_detail_retention_days", # int  — po kolika dnech zahodit objemné detaily hledání (výchozí 14)
+    "subtitle_reconcile_delete_missing",  # bool — smazat záznamy titulků, jejichž soubor už neexistuje (výchozí true)
 }
 
 # Klíče jejichž hodnoty se maskují (zobrazí jen posledních 4 znaků)
