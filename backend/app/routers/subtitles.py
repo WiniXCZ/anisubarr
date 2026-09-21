@@ -31,6 +31,7 @@ from ..services.kamui import KamuiScraper
 from ..services.gensubs import GenSubsScraper
 from ..services.local_subs import LocalFolderScraper
 from ..services.subtitle_utils import extract_subtitle_bytes
+from ..services import subtitle_cleanup
 from ..services.scraper_limiter import RateLimitExceeded
 from ..services import local_subs, path_resolver
 
@@ -1647,6 +1648,23 @@ def _save_subtitle(ep: Episode, data: bytes, language: str, ext: str) -> str:
     """
     if not data or len(data) < 10:
         raise HTTPException(400, "Stažený soubor titulku je prázdný — zkus jiný zdroj")
+
+    # Every download passes through here, so this is where the post-processing
+    # switches finally do something. They used to sit in the settings whitelist
+    # with nothing reading them: the user turned them on and the file was
+    # written exactly as it came off the provider.
+    try:
+        from ..database import SessionLocal as _SL
+        _db = _SL()
+        try:
+            data = subtitle_cleanup.clean(
+                data, ext, subtitle_cleanup.options_from_settings(_db))
+        finally:
+            _db.close()
+    except Exception as _exc:
+        import logging
+        logging.getLogger("anisubarr.subtitles").warning(
+            "[titulky] úprava po stažení přeskočena: %s", _exc)
 
     if ep.file_path:
         dest = path_resolver.subtitle_path_for(ep.file_path, language, ext)

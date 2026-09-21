@@ -865,8 +865,6 @@ function SyncSettingsSection() {
   const t = useT();
   const { f, set, setFields, saveMutation, dirty } = useSettingsForm();
 
-  const maxOffset = parseInt(f.alass_max_offset_seconds || '60', 10);
-
   return (
     <div style={{display:'flex',flexDirection:'column',gap:18}}>
       <SettingsGroup theme={T} title={t('set_sync_when_title')}
@@ -881,13 +879,6 @@ function SyncSettingsSection() {
       </SettingsGroup>
 
       <SettingsGroup theme={T} title={t('set_sync_params_title')} sub={t('set_sync_params_sub')}>
-        <SettingsRow theme={T} label={t('set_sync_audioref_label')}
-          sub={t('set_sync_audioref_sub')}
-          control={
-            <Toggle theme={T}
-              on={f.alass_use_audio_reference !== 'false'}
-              onChange={v => set('alass_use_audio_reference', v ? 'true' : 'false')}/>
-          }/>
         <SettingsRow theme={T} label={t('set_sync_skipfps_label')}
           sub={t('set_sync_skipfps_sub')}
           control={
@@ -895,18 +886,23 @@ function SyncSettingsSection() {
               on={f.alass_no_fix_framerate === 'true'}
               onChange={v => set('alass_no_fix_framerate', v ? 'true' : 'false')}/>
           }/>
-        <SettingsRow theme={T} label="Golden-section search"
-          sub={t('set_sync_golden_sub')}
+        <SettingsRow theme={T} label={t('set_sync_nosplit_label')}
+          sub={t('set_sync_nosplit_sub')}
           control={
             <Toggle theme={T}
-              on={f.alass_golden_section_search === 'true'}
-              onChange={v => set('alass_golden_section_search', v ? 'true' : 'false')}/>
+              on={f.alass_no_split === 'true'}
+              onChange={v => set('alass_no_split', v ? 'true' : 'false')}/>
           }/>
+        <NumberRow
+          label={t('set_sync_penalty_label')}
+          sub={t('set_sync_penalty_sub')}
+          value={parseInt(f.alass_split_penalty || '7', 10)} min={1} max={100}
+          onChange={v => set('alass_split_penalty', String(v))}/>
         <NumberRow last
-          label={t('set_sync_maxoffset_label')}
-          sub={t('set_sync_maxoffset_sub')}
-          value={maxOffset} min={5} max={600}
-          onChange={v => set('alass_max_offset_seconds', String(v))}/>
+          label={t('set_sync_speed_label')}
+          sub={t('set_sync_speed_sub')}
+          value={parseInt(f.alass_speed_optimization || '0', 10)} min={0} max={20}
+          onChange={v => set('alass_speed_optimization', String(v))}/>
       </SettingsGroup>
 
       <SaveBar dirty={dirty} onDiscard={() => setFields({})} onSave={() => saveMutation.mutate()} saving={saveMutation.isPending}/>
