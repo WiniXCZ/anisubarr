@@ -1,8 +1,9 @@
 """
 kamui-subs.cz scraper – Czech anime subtitles.
 
-Kamui distributes subtitle archives as password-protected RAR files.
-The RAR password is site-wide (stored in settings as kamui_rar_password).
+Kamui distributes subtitle archives as password-protected archives — ZIP
+today, RAR historically. The password is site-wide and the same for both
+(stored in settings as kamui_rar_password).
 """
 from __future__ import annotations
 
@@ -13,7 +14,8 @@ import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
-from .subtitle_utils import extract_rar_subtitle, detect_language_from_name
+from .subtitle_utils import (extract_rar_subtitle, extract_zip_subtitle,
+                             detect_language_from_name)
 
 log = logging.getLogger("anisubarr.kamui")
 
@@ -492,16 +494,26 @@ class KamuiScraper:
 
             raw = r.content
 
-        # If it's a RAR archive, extract subtitle using the site password
+        # Never the password itself: debug logs get pasted into chats and issue
+        # reports, and this one unlocks the provider account.
+        have_password = "nastaveno" if self.rar_password else "chybí"
+
         if raw[:4] == b"Rar!":
-            # Never the password itself: debug logs get pasted into chats and
-            # issue reports, and this one unlocks the provider account.
-            log.debug("Kamui: extrahuju RAR (heslo %s)",
-                      "nastaveno" if self.rar_password else "chybí")
+            log.debug("Kamui: extrahuju RAR (heslo %s)", have_password)
             sub_bytes, _ = extract_rar_subtitle(raw, self.rar_password)
             return sub_bytes
 
-        # ZIP or plain text — return as-is (extract_subtitle_bytes handles it)
+        # Kamui serves ZIP now, and kept the site-wide password. Unpacking has
+        # to happen here because nobody downstream knows that password: the
+        # callers reach for extract_subtitle_bytes() without one, so an
+        # encrypted archive used to be written to disk as a .ass file that was
+        # really an archive — every download looked like it worked.
+        if raw[:2] == b"PK":
+            log.debug("Kamui: extrahuju ZIP (heslo %s)", have_password)
+            sub_bytes, _ = extract_zip_subtitle(raw, self.rar_password)
+            return sub_bytes
+
+        # Plain text — return as-is.
         return raw
 
     def _login_or_raise(self):

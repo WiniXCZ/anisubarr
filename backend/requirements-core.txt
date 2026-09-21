@@ -14,3 +14,4 @@ beautifulsoup4==4.12.3
 requests==2.32.3
 apscheduler==3.10.4
 PyYAML==6.0.1            # settings.yaml editable config mirror
+pyzipper==0.3.6          # WinZip-AES ZIPs — Kamui ships password-protected archives

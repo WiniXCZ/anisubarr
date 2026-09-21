@@ -70,6 +70,17 @@ def _sibling_with_other_extension(local_path: str) -> str | None:
     return None
 
 
+def _sibling_of(reference: str, new_name: str) -> str:
+    """``new_name`` beside ``reference``, in the reference's own namespace.
+
+    Used when a row follows its series to a new root: the episode's path is
+    the one Sonarr keeps current, so the subtitle inherits it rather than an
+    absolute path resolved for this container, which would bake today's volume
+    mapping into the database.
+    """
+    return _rename_kept_in_place(reference, new_name)
+
+
 def _rename_kept_in_place(stored: str, new_name: str) -> str:
     """Swap the file name, keep everything to its left exactly as it was.
 
@@ -81,6 +92,40 @@ def _rename_kept_in_place(stored: str, new_name: str) -> str:
     head, found, _ = stored.rpartition(separator)
     return f"{head}{separator}{new_name}" if found else new_name
 
+
+def _where_the_episode_lives_now(sub: Subtitle) -> str | None:
+    """The subtitle's folder as Sonarr sees it today, if the series moved.
+
+    A series that gets promoted moves from incomplete_anime into the main
+    library, and its subtitle rows keep pointing at the old root. The folder
+    there is simply gone, so the row was written off as "unreachable" and
+    skipped forever — 100 rows of false "has subtitles" that nothing would
+    ever download a replacement for.
+
+    Searching the library for them would be guesswork. Sonarr already knows:
+    it rewrites the episode's own file_path on the move, so the video is the
+    authority on where its subtitles should be.
+    """
+    episode = sub.episode
+    video = getattr(episode, "file_path", None) if episode else None
+    if not video:
+        return None
+    folder = os.path.dirname(_local(video))
+    return folder if folder and os.path.isdir(folder) else None
+
+
+def _named_like(folder: str, stored_name: str) -> str | None:
+    """The same subtitle in a folder, under its own name or another format."""
+    stem = os.path.splitext(stored_name)[0].lower()
+    try:
+        present = {name.lower(): name for name in os.listdir(folder)}
+    except OSError:
+        return None
+    for ext in _SUB_EXTS:
+        actual = present.get(stem + ext)
+        if actual:
+            return os.path.join(folder, actual)
+    return None
 
 def reconcile(db: Session, *, delete_missing: bool = True,
               episode_ids: list[int] | None = None) -> dict:
@@ -97,7 +142,8 @@ def reconcile(db: Session, *, delete_missing: bool = True,
     rows = query.all()
 
     report = {"checked": len(rows), "ok": 0, "repaired": 0,
-              "unreachable": 0, "missing": 0, "deleted": 0}
+              "unreachable": 0, "missing": 0, "deleted": 0,
+              "followed_move": 0, "moved_missing": 0}
     phantoms: list[Subtitle] = []
     touched: set[int] = set()
 
@@ -107,14 +153,37 @@ def reconcile(db: Session, *, delete_missing: bool = True,
             report["ok"] += 1
             continue
 
+        stored_name = os.path.basename(sub.file_path.replace("\\", "/"))
         folder = os.path.dirname(local)
-        if not folder or not os.path.isdir(folder):
-            # The share may simply not be mounted right now. Saying nothing
-            # about this row is the only honest answer.
-            report["unreachable"] += 1
+
+        if folder and os.path.isdir(folder):
+            found = _sibling_with_other_extension(local)
+        else:
+            # The folder is gone. That is either an unmounted share or a series
+            # that moved between library roots, and those need opposite
+            # answers — so ask the episode where it lives now before writing
+            # the row off.
+            moved_to = _where_the_episode_lives_now(sub)
+            if not moved_to:
+                report["unreachable"] += 1
+                continue
+            found = _named_like(moved_to, stored_name)
+            if not found:
+                # The video is reachable and the subtitle is not beside it.
+                # That is a real answer, not a mount problem.
+                report["moved_missing"] += 1
+                report["missing"] += 1
+                phantoms.append(sub)
+                continue
+            sub.file_path = _sibling_of(
+                getattr(sub.episode, "file_path", "") or sub.file_path,
+                os.path.basename(found))
+            sub.format = os.path.splitext(found)[1].lstrip(".").lower()
+            touched.add(sub.episode_id)
+            report["repaired"] += 1
+            report["followed_move"] += 1
             continue
 
-        found = _sibling_with_other_extension(local)
         if found:
             sub.file_path = _rename_kept_in_place(sub.file_path, os.path.basename(found))
             sub.format = os.path.splitext(found)[1].lstrip(".").lower()
