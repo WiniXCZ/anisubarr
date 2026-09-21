@@ -111,11 +111,9 @@ def _parse_subtitle(content: str, ext: str) -> list[dict]:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_LANG_ALIASES = {
-    "cs": {"cs", "cze", "ces", "cz"},
-    "ja": {"ja", "jpn"},
-    "en": {"en", "eng"},
-}
+# One table for the whole app — this copy knew three languages, so a Spanish
+# subtitle was found here and not there.
+from ..utils import LANGUAGE_VARIANTS as _LANG_ALIASES  # noqa: E402
 
 def _get_episode(db: Session, ep_id: int) -> Episode:
     ep = db.query(Episode).filter(Episode.id == ep_id).first()

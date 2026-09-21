@@ -13,25 +13,56 @@ CS_LANGS: frozenset = frozenset({"cs", "cze", "cz", "ces"})
 
 # Sonarr sometimes stores the full English name or Czech-language variants in
 # the subtitles_in_file field.
-CS_NAMES: frozenset = CS_LANGS | frozenset(
-    {"czech", "cestina", "cestiny", "cestina"}
-)
+CS_NAMES: frozenset = frozenset()   # filled in below from LANGUAGE_VARIANTS
 
 _SUB_EXTS = ("srt", "ass", "ssa", "vtt")
 
-# Three-letter (and full-word) forms folded onto the two-letter code, so one
-# language is one entry no matter which tool named the file.
+# ---------------------------------------------------------------------------
+# One language, one entry — whichever tool named the file.
+#
+# There used to be three of these tables, disagreeing. This one folded eleven
+# languages onto their codes but not Korean; the filter in subtitles.py went
+# the other way and knew nothing of Spanish, Italian, Portuguese or Romanian;
+# the line editor knew three languages in total. So a Spanish subtitle behaved
+# differently depending on which part of the code happened to receive it.
+#
+# Both directions are derived from this single mapping: code → every form it
+# arrives as, and the reverse for folding a form back onto its code.
+# ---------------------------------------------------------------------------
+
+LANGUAGE_VARIANTS: dict[str, set[str]] = {
+    "cs": {"cs", "cz", "cze", "ces", "czech", "cestina", "cestiny", "česky", "čeština"},
+    "sk": {"sk", "slk", "slo", "slovak", "slovensky", "slovenčina"},
+    "en": {"en", "eng", "english"},
+    "ja": {"ja", "jp", "jpn", "japanese"},
+    "de": {"de", "ger", "deu", "german"},
+    "pl": {"pl", "pol", "polish"},
+    "fr": {"fr", "fra", "fre", "french"},
+    "es": {"es", "spa", "esp", "spanish"},
+    "ru": {"ru", "rus", "russian"},
+    "hu": {"hu", "hun", "hungarian"},
+    "ro": {"ro", "ron", "rum", "romanian"},
+    "pt": {"pt", "por", "portuguese"},
+    "it": {"it", "ita", "italian"},
+    "zh": {"zh", "chi", "zho", "chinese"},
+    "ko": {"ko", "kor", "korean"},
+}
+
+
+CS_NAMES: frozenset = frozenset(LANGUAGE_VARIANTS["cs"])   # noqa: F811
+
+
+def variants_of(code: str) -> set[str]:
+    """Every form a language code arrives as — for matching rows and files."""
+    code = (code or "").strip().lower()
+    return LANGUAGE_VARIANTS.get(code, {code} if code else set())
+
+
 _LANG_ALIASES = {
-    "slo": "sk", "slk": "sk", "slovak": "sk", "slovensky": "sk",
-    "eng": "en", "english": "en",
-    "jpn": "ja", "jp": "ja", "japanese": "ja",
-    "ger": "de", "deu": "de", "german": "de",
-    "pol": "pl", "polish": "pl",
-    "fra": "fr", "fre": "fr", "french": "fr",
-    "spa": "es", "esp": "es", "spanish": "es",
-    "rus": "ru", "russian": "ru",
-    "hun": "hu", "ron": "ro", "rum": "ro",
-    "por": "pt", "ita": "it", "chi": "zh", "zho": "zh",
+    variant: code
+    for code, variants in LANGUAGE_VARIANTS.items()
+    for variant in variants
+    if variant != code
 }
 
 # has_cs_sub() can optionally probe the video file itself with ffprobe to detect

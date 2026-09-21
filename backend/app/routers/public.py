@@ -19,6 +19,7 @@ Endpoints:
 import json
 import logging
 import time
+import os
 from collections import defaultdict
 from threading import Lock
 
@@ -42,11 +43,23 @@ _SUB_RATE_LIMIT = 5       # subscribe calls per IP per window
 _SUB_MAX_TRACKED_IPS = 10_000
 
 
+# A forwarded-for header is only worth reading when something you control set
+# it. Anyone can send one, so trusting it unconditionally turned the rate limit
+# below into a formality: a different X-Real-IP per request is a different
+# bucket, and the table can be flooded from one address. The socket address is
+# the one thing the caller cannot choose.
+_TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "").strip().lower() in (
+    "1", "true", "yes")
+
+
 def _client_ip(request: Request) -> str:
+    peer = request.client.host if request.client else "unknown"
+    if not _TRUST_PROXY_HEADERS:
+        return peer
     return (
         request.headers.get("X-Real-IP")
         or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        or (request.client.host if request.client else "unknown")
+        or peer
     )
 
 
