@@ -1,17 +1,25 @@
 """
 promotion.py – Auto-promotion / demotion service.
 
+One question decides both directions: can a viewer start the show from the
+beginning in Czech? That is the "prefix" — how many episodes in a row, counted
+from the first one (specials excluded), have a CS subtitle.
+
 Promotion rule:
-  All monitored (non-special) episodes have files AND every one of those
-  episodes has at least one CZ subtitle in the DB
+  prefix >= promo_min_prefix (default 1, i.e. S01E01 has Czech)
   → Move series to the root folder whose name contains "anime_series"
   → Add Sonarr tag "tit" to the series
 
 Demotion rule:
-  Series has an open Seerr issue (status == 1)
-  → Set has_issue = True  (shows orange badge in UI)
-  → Reset promoted = False
-  → Move series back to the root folder whose name contains "incomplete"
+  prefix < promo_min_prefix — the show can no longer be started in Czech
+  (or a Seerr issue, see check_and_demote_issues).
+  Newer episodes or a whole new season still waiting for subtitles are NOT a
+  reason: the show stays watchable from the start and fills in as subs come.
+  → Move series back to the root folder whose name contains "incomplete".
+  `promoted` is cleared only when the folder really moved. A flag that says
+  "demoted" while the folder sits in anime_series gets set straight back by
+  check_and_promote / Sonarr sync, which is the loop that sent the same
+  "degradováno" notices every other morning.
 """
 from __future__ import annotations
 
@@ -56,56 +64,56 @@ def _in_folder(series_path: str, root_folder: str) -> bool:
 
 # ── Promotion eligibility ─────────────────────────────────────────────────────
 
-def _qualifies_for_promotion(db: Session, series: Series) -> dict:
-    """
-    Return {"ok": True} or {"ok": False, "reason": str}.
-
-    Specials (season_number == 0) are always ignored.
-
-    Ended / Completed series:
-      Every episode with has_file must have a CS subtitle.
-
-    Continuing (or any other active) series:
-      Episodes are sorted by (season_number, episode_number).
-      - The first episode must have a CS subtitle.
-      - All episodes except the last must have CS subtitles
-        (unless promo_allow_last_episode_missing is true, which is the default).
-      - The last downloaded episode may be missing subtitles (just aired).
-    """
-    from ..utils.settings_helper import read_setting as _rs
-    allow_last_missing = _rs("promo_allow_last_episode_missing", db) != "false"
-
-    eps_with_file = sorted(
+def _eps_with_file(series: Series) -> list:
+    """Non-special episodes that have a file, in viewing order."""
+    return sorted(
         [ep for ep in series.episodes if ep.season_number > 0 and ep.has_file],
         key=lambda ep: (ep.season_number, ep.episode_number),
     )
 
+
+def _min_prefix(db: Session) -> int:
+    from ..utils.settings_helper import read_setting as _rs
+    try:
+        return max(1, int(_rs("promo_min_prefix", db) or "1"))
+    except ValueError:
+        return 1
+
+
+def _cs_prefix(eps_with_file: list, dir_cache: "dict | None" = None) -> int:
+    """How many episodes in a row, from the first one, have a CS subtitle."""
+    n = 0
+    for ep in eps_with_file:
+        if not has_cs_sub(ep, dir_cache):
+            break
+        n += 1
+    return n
+
+
+def _ep_code(ep) -> str:
+    return f"S{ep.season_number:02d}E{ep.episode_number:02d}"
+
+
+def _qualifies_for_promotion(db: Session, series: Series) -> dict:
+    """
+    Return {"ok": True} or {"ok": False, "reason": str}.
+
+    The series qualifies when it can be started in Czech: the first
+    promo_min_prefix episodes (default 1) all have a CS subtitle. A show
+    shorter than that qualifies when every episode it has is covered.
+    Holes further on don't block it — the user's rule is "which episode can
+    you start with", not "how much is covered" (21. 9. 2026).
+
+    Specials (season_number == 0) are always ignored.
+    """
+    eps_with_file = _eps_with_file(series)
     if not eps_with_file:
         return {"ok": False, "reason": "no_episodes_with_files"}
 
-    status = (series.status or "").strip().lower()
-    is_ended = status in {"ended", "completed"}
-
-    if is_ended:
-        missing = [ep for ep in eps_with_file if not has_cs_sub(ep)]
-        if missing:
-            nums = [f"S{ep.season_number:02d}E{ep.episode_number:02d}" for ep in missing[:5]]
-            return {"ok": False, "reason": f"missing_cs:{','.join(nums)}"}
-    else:
-        # First episode must always have CS subtitles
-        if not has_cs_sub(eps_with_file[0]):
-            ep = eps_with_file[0]
-            return {
-                "ok":     False,
-                "reason": f"missing_cs_first:S{ep.season_number:02d}E{ep.episode_number:02d}",
-            }
-
-        # Check remaining episodes; last one may be exempt when allow_last_missing=True
-        must_have_subs = eps_with_file[:-1] if allow_last_missing else eps_with_file
-        missing = [ep for ep in must_have_subs if not has_cs_sub(ep)]
-        if missing:
-            nums = [f"S{ep.season_number:02d}E{ep.episode_number:02d}" for ep in missing[:5]]
-            return {"ok": False, "reason": f"missing_cs_middle:{','.join(nums)}"}
+    need   = min(_min_prefix(db), len(eps_with_file))
+    prefix = _cs_prefix(eps_with_file[:need])
+    if prefix < need:
+        return {"ok": False, "reason": f"missing_cs_start:{_ep_code(eps_with_file[prefix])}"}
 
     return {"ok": True, "reason": "qualifies"}
 
@@ -469,121 +477,40 @@ def _should_demote(
     dir_cache: "dict | None" = None,
 ) -> "tuple[str, str]":
     """
-    Analyse CS subtitle coverage of *series* and decide the appropriate action.
+    Decide whether *series* still belongs in anime_series.
 
-    Rules (evaluated in priority order):
-      0. No missing episodes                           → ("ok",         "all_subbed")
-      1. Exactly 1 episode without CS sub              → demote_single_episode_action (default flag_only)
-      2. > demote_pct_threshold % missing              → ("demote",     …)  always
-      3. Ended/Completed + ≥ demote_completed_threshold missing → ("demote", …)
-      3b. Ended/Completed + below threshold            → ("flag_only",  …)
-      4. Continuing + ≥ demote_multi_episode_threshold middle missing → ("demote", …)
-         (middle = all except last when demote_allow_last_episode_missing=True)
-      5. Continuing + only recent tail episodes bad    → ("flag_only",  …)
+    The mirror of _qualifies_for_promotion: demote only when the show can no
+    longer be started in Czech — fewer than promo_min_prefix episodes in a row
+    from the first one have a CS subtitle. Missing subtitles further on (a new
+    season, the episode that aired yesterday, a hole in the middle) are not a
+    reason. Under the old percentage / middle-episode thresholds a fresh
+    season pushed One Piece, Slime or Black Clover over 10 % and demoted them
+    although every earlier episode was in Czech.
 
     Specials (season_number == 0) are ignored throughout.
 
     dir_cache: optional shared filesystem cache reused across all episodes of the
-    series (avoids redundant os.listdir calls).  A fresh empty dict is created
-    per call when None.
+    series (avoids redundant os.listdir calls).
 
     Returns:
-        ("demote",    reason_string)
-        ("flag_only", reason_string)
-        ("ok",        reason_string)
+        ("demote", reason_string)
+        ("ok",     reason_string)
     """
-    from ..utils.settings_helper import read_setting as _rs
-
-    if dir_cache is None:
-        dir_cache = {}
-
-    single_action       = _rs("demote_single_episode_action",    db) or "flag_only"
-    multi_threshold     = int(_rs("demote_multi_episode_threshold", db) or "2")
-    completed_threshold = int(_rs("demote_completed_threshold",   db) or "2")
-    pct_threshold_int   = int(_rs("demote_pct_threshold",         db) or "10")
-    pct_threshold       = pct_threshold_int / 100.0
-    allow_last_missing  = _rs("demote_allow_last_episode_missing", db) != "false"
-
-    eps_with_file = sorted(
-        [ep for ep in series.episodes if ep.season_number > 0 and ep.has_file],
-        key=lambda ep: (ep.season_number, ep.episode_number),
-    )
-
+    eps_with_file = _eps_with_file(series)
     if not eps_with_file:
-        log.debug("_should_demote %r (id=%d): ok — no_episodes_with_files", series.title, series.id)
         return ("ok", "no_episodes_with_files")
 
-    missing = [ep for ep in eps_with_file if not has_cs_sub(ep, dir_cache)]
-    missing_count = len(missing)
-    total = len(eps_with_file)
-
-    log.debug(
-        "_should_demote %r (id=%d): %d/%d missing CS (%.0f%%), status=%s, "
-        "pct_threshold=%d%%, multi_thr=%d, completed_thr=%d",
-        series.title, series.id, missing_count, total,
-        missing_count / total * 100, series.status,
-        pct_threshold_int, multi_threshold, completed_threshold,
-    )
-
-    if missing_count == 0:
-        return ("ok", "all_subbed")
-
-    def _fmt(eps):
-        return ",".join(f"S{e.season_number:02d}E{e.episode_number:02d}" for e in eps[:5])
-
-    # Rule 1: single bad episode — configurable action (default: flag only)
-    if missing_count == 1:
+    need   = min(_min_prefix(db), len(eps_with_file))
+    prefix = _cs_prefix(eps_with_file[:need], {} if dir_cache is None else dir_cache)
+    if prefix < need:
+        first_bad = _ep_code(eps_with_file[prefix])
         log.info(
-            "_should_demote %r (id=%d): %s — single missing: %s",
-            series.title, series.id, single_action, _fmt(missing),
+            "_should_demote %r (id=%d): DEMOTE — od začátku jen %d/%d dílů s CS, chybí %s",
+            series.title, series.id, prefix, need, first_bad,
         )
-        return (single_action, f"single_missing:{_fmt(missing)}")
+        return ("demote", f"missing_cs_start:{first_bad}")
 
-    # Rule 2: percentage threshold (checked before status rules)
-    if missing_count / total > pct_threshold:
-        log.info(
-            "_should_demote %r (id=%d): DEMOTE — %.0f%% > %d%% threshold, missing: %s",
-            series.title, series.id, missing_count / total * 100, pct_threshold_int, _fmt(missing),
-        )
-        return ("demote", f"over_{pct_threshold_int}pct:{_fmt(missing)}")
-
-    # Rules 3 / 4 / 5: status-based (2+ missing, within pct threshold)
-    status = (series.status or "").strip().lower()
-    is_ended = status in {"ended", "completed"}
-
-    if is_ended:
-        if missing_count >= completed_threshold:
-            log.info(
-                "_should_demote %r (id=%d): DEMOTE — ended, %d missing >= threshold %d, missing: %s",
-                series.title, series.id, missing_count, completed_threshold, _fmt(missing),
-            )
-            return ("demote", f"ended_missing_{completed_threshold}plus:{_fmt(missing)}")
-        log.info(
-            "_should_demote %r (id=%d): flag_only — ended, %d missing < threshold %d, missing: %s",
-            series.title, series.id, missing_count, completed_threshold, _fmt(missing),
-        )
-        return ("flag_only", f"ended_few_missing:{_fmt(missing)}")
-
-    # Continuing: count missing "middle" episodes
-    # When allow_last_missing=True the last episode is exempt (just aired)
-    if allow_last_missing:
-        middle_missing = [ep for ep in missing if ep != eps_with_file[-1]]
-    else:
-        middle_missing = missing
-
-    if len(middle_missing) >= multi_threshold:
-        log.info(
-            "_should_demote %r (id=%d): DEMOTE — continuing, %d middle missing >= threshold %d, missing: %s",
-            series.title, series.id, len(middle_missing), multi_threshold, _fmt(middle_missing),
-        )
-        return ("demote", f"middle_missing:{_fmt(middle_missing)}")
-
-    # Only the recent tail episodes are missing → tolerate
-    log.info(
-        "_should_demote %r (id=%d): flag_only — continuing, only tail missing: %s",
-        series.title, series.id, _fmt(missing),
-    )
-    return ("flag_only", f"recent_missing:{_fmt(missing)}")
+    return ("ok", "watchable_from_start")
 
 
 # ── Seerr-driven demotion ─────────────────────────────────────────────────────
@@ -719,8 +646,6 @@ def check_and_demote_issues(db: Session) -> list[dict]:
                 verdict, reason = _should_demote(s, db)
 
                 s.has_issue = True
-                if verdict == "demote":
-                    s.promoted = False
 
                 # Move files only when both the subtitle analysis AND the global
                 # setting agree on a full demotion.
@@ -733,6 +658,8 @@ def check_and_demote_issues(db: Session) -> list[dict]:
                             move_files=True,
                             rootFolderPath=incomplete_folder,
                         )
+                        # Only now — the folder really left anime_series.
+                        s.promoted = False
                         results.append({
                             "action":    "demoted",
                             "series_id": s.id,
@@ -776,8 +703,12 @@ def check_and_demote_issues(db: Session) -> list[dict]:
                 db.commit()
 
         else:
-            # Issue resolved — clear the flag
-            if s.has_issue:
+            # No open Seerr issue. The flag may still have been raised by the
+            # subtitle-coverage sweep, which knows nothing about Seerr — clearing
+            # it here unconditionally let that sweep raise it (and notify) again
+            # the next morning, every other day. Clear it only once the show can
+            # be started in Czech again.
+            if s.has_issue and _should_demote(s, db)[0] == "ok":
                 s.has_issue = False
                 db.commit()
                 results.append({
@@ -794,8 +725,8 @@ def check_and_demote_issues(db: Session) -> list[dict]:
 def fix_wrongly_promoted(db: Session, notify: bool = True) -> list[dict]:
     """
     Scan all promoted series and apply _should_demote logic:
-      "demote" / "flag_only" → set has_issue=True, leave promoted alone
-      "ok"                   → no change (clears a stale has_issue flag)
+      "demote" → set has_issue=True, leave promoted alone
+      "ok"     → no change (clears a stale has_issue flag)
 
     Does NOT call Sonarr — only updates the DB, which is exactly why it no
     longer clears ``promoted``: see the note in the loop below.
@@ -918,33 +849,9 @@ def _demote_by_subtitle_coverage(db: Session) -> list[dict]:
         if verdict == "ok":
             continue
 
-        if verdict == "flag_only":
-            s.has_issue = True
-            db.commit()
-            log.info(
-                "_demote_by_subtitle_coverage: flagged %r (id=%d) — %s",
-                s.title, s.id, reason,
-            )
-            results.append({
-                "action":    "issue_flagged",
-                "series_id": s.id,
-                "title":     s.title,
-                "reason":    reason,
-            })
-            try:
-                from . import discord as discord_svc
-                discord_svc.notify_issue_flagged(
-                    title=s.title,
-                    series_id=s.id,
-                    poster_url=getattr(s, "poster_url", None),
-                    db=db,
-                )
-            except Exception:
-                pass
-            continue
-
-        # verdict == "demote"
-        s.promoted  = False
+        # verdict == "demote". The flag goes up first and stays up until the
+        # show can be started in Czech again (check_and_demote_issues clears it
+        # only then), so whatever notice follows goes out once, not every run.
         s.has_issue = True
         db.commit()
 
@@ -956,6 +863,8 @@ def _demote_by_subtitle_coverage(db: Session) -> list[dict]:
                     move_files=True,
                     rootFolderPath=incomplete_folder,
                 )
+                s.promoted = False
+                db.commit()
                 log.info(
                     "_demote_by_subtitle_coverage: demoted %r (id=%d) → %s — %s",
                     s.title, s.id, incomplete_folder, reason,
@@ -988,20 +897,22 @@ def _demote_by_subtitle_coverage(db: Session) -> list[dict]:
                     "error":     str(exc),
                 })
         else:
-            # DB demoted but no file move (flag_only mode or no incomplete folder)
+            # No move (flag_only mode or no incomplete folder): the show stays
+            # in anime_series, so it stays promoted — reporting "degradováno"
+            # here is what the next sync quietly undid. Say what really happened.
             log.info(
-                "_demote_by_subtitle_coverage: demoted DB-only %r (id=%d) — %s",
+                "_demote_by_subtitle_coverage: flagged %r (id=%d) — %s (bez přesunu)",
                 s.title, s.id, reason,
             )
             results.append({
-                "action":    "demoted",
+                "action":    "issue_flagged",
                 "series_id": s.id,
                 "title":     s.title,
                 "reason":    reason,
             })
             try:
                 from . import discord as discord_svc
-                discord_svc.notify_demoted(
+                discord_svc.notify_issue_flagged(
                     title=s.title,
                     series_id=s.id,
                     poster_url=getattr(s, "poster_url", None),
