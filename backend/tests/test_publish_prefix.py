@@ -181,3 +181,11 @@ def test_no_notice_at_all_for_a_show_that_can_be_started(db):
     """The 15 shows from the October loop: every morning, nothing to say."""
     db.make([True] * 10 + [False] * 4)
     assert [_morning(db)[1] for _ in range(3)] == [0, 0, 0]
+
+
+def test_a_held_series_is_not_promoted(db):
+    s = db.make([True] * 5, folder=INCOMPLETE, promoted=False)
+    with _settings(promo_hold_series=f"1, {s.id}"), _folders():
+        assert promotion.check_and_promote(db, s)["action"] == "held"
+    db.refresh(s)
+    assert s.promoted is False
