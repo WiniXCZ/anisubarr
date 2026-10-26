@@ -135,6 +135,7 @@ EDITABLE_KEYS: set[str] = {
     "promo_require_cs_only",           # bool — require strictly CS subs, not SK/EN (default false)
     "promo_require_alass",             # bool — require alass sync before promotion (default false)
     "promo_min_episodes",              # int  — min absolute episode count with subs (default 1)
+    "promo_min_prefix",                # int  — episodes in a row from S01E01 that must have CS subs; decides promotion AND demotion (default 1)
     # ── Demotion rules ────────────────────────────────────────────────────
     "demote_on_episode_error",         # str  — never / flag_only / after_x_episodes (default flag_only)
     "demote_episode_threshold",        # int  — episodes needed for after_x_episodes mode (default 3)
@@ -142,12 +143,12 @@ EDITABLE_KEYS: set[str] = {
     "demote_protect_completed",        # bool — protect ended series with ≥50% CS subs (default true)
     "demote_cooldown_hours",           # int  — hours to wait after promotion before allowing demote (default 24)
     "demote_on_seerr_report",          # bool — auto-demote when Seerr reports an issue (default true)
-    "demote_single_episode_action",    # str  — flag_only / demote — action when exactly 1 ep missing (default flag_only)
-    "demote_multi_episode_threshold",  # int  — middle-ep count threshold for continuing series (default 2)
-    "demote_completed_threshold",      # int  — missing-ep count threshold for ended/completed series (default 2)
-    "demote_pct_threshold",            # int  — % of missing eps that always triggers demotion (default 10)
-    "demote_allow_last_episode_missing", # bool — tolerate last ep missing subs for airing series (default true)
-    "promo_allow_last_episode_missing",  # bool — tolerate last ep missing subs when evaluating promotion (default true)
+    "demote_single_episode_action",    # UNUSED since promo_min_prefix — str  — flag_only / demote — action when exactly 1 ep missing (default flag_only)
+    "demote_multi_episode_threshold",  # UNUSED since promo_min_prefix — int  — middle-ep count threshold for continuing series (default 2)
+    "demote_completed_threshold",      # UNUSED since promo_min_prefix — int  — missing-ep count threshold for ended/completed series (default 2)
+    "demote_pct_threshold",            # UNUSED since promo_min_prefix — int  — % of missing eps that always triggers demotion (default 10)
+    "demote_allow_last_episode_missing", # UNUSED since promo_min_prefix — bool — tolerate last ep missing subs for airing series (default true)
+    "promo_allow_last_episode_missing",  # UNUSED since promo_min_prefix — bool — tolerate last ep missing subs when evaluating promotion (default true)
     # ── Seerr cache ────────────────────────────────────────────────────────────
     "seerr_sync_interval",             # int  — sync interval in minutes (5/10/15/30, default 10)
     # ── Automatické úlohy — event triggers ─────────────────────────────────────

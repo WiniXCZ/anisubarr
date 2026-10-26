@@ -1971,11 +1971,9 @@ function PromotionSection() {
 
   const minPct           = parseInt(f.promo_min_subtitle_pct        || '80', 10);
   const minEps           = parseInt(f.promo_min_episodes            || '1',  10);
+  const minPrefix        = parseInt(f.promo_min_prefix              || '1',  10);
   const cooldown         = parseInt(f.demote_cooldown_hours         || '24', 10);
   const threshold        = parseInt(f.demote_episode_threshold      || '3',  10);
-  const multiThreshold   = parseInt(f.demote_multi_episode_threshold || '2', 10);
-  const completedThresh  = parseInt(f.demote_completed_threshold    || '2',  10);
-  const pctThreshold     = parseInt(f.demote_pct_threshold          || '10', 10);
 
   const auditTailHighDays  = parseInt(f.audit_tail_high_tolerance_days   || '7',  10);
   const auditTailLowDays   = parseInt(f.audit_tail_low_tolerance_days    || '30', 10);
@@ -1998,6 +1996,17 @@ function PromotionSection() {
       {/* ── Podmínky povyšování ── */}
       <SettingsGroup theme={T} title={t('set_promo_promote_group_title')}
         sub={t('set_promo_promote_group_sub')}>
+
+        <NumberRow
+          label={t('set_promo_min_prefix_label')}
+          sub={<>
+            {t('set_promo_min_prefix_sub')}
+            <span style={{display:'block',fontStyle:'italic',opacity:0.65,marginTop:2}}>
+              {t('set_promo_min_prefix_example')}
+            </span>
+          </>}
+          value={minPrefix} min={1} max={99}
+          onChange={v => set('promo_min_prefix', String(v))}/>
 
         <SliderRow
           label={t('set_promo_min_pct_label')}
@@ -2026,19 +2035,6 @@ function PromotionSection() {
             <Toggle theme={T}
               on={f.promo_require_cs_only === 'true'}
               onChange={v => set('promo_require_cs_only', v ? 'true' : 'false')}/>
-          }/>
-
-        <SettingsRow theme={T} label={t('set_promo_tolerate_last_ep_label')}
-          sub={<>
-            {t('set_promo_tolerate_last_ep_sub')}
-            <span style={{display:'block',fontStyle:'italic',opacity:0.65,marginTop:2}}>
-              {t('set_promo_tolerate_last_ep_example')}
-            </span>
-          </>}
-          control={
-            <Toggle theme={T}
-              on={f.promo_allow_last_episode_missing !== 'false'}
-              onChange={v => set('promo_allow_last_episode_missing', v ? 'true' : 'false')}/>
           }/>
 
         <SettingsRow theme={T} last label={t('set_promo_require_alass_label')}
@@ -2094,69 +2090,6 @@ function PromotionSection() {
               on={f.demote_protect_completed !== 'false'}
               onChange={v => set('demote_protect_completed', v ? 'true' : 'false')}/>
           }/>
-
-        <SettingsRow theme={T} label={t('set_promo_single_ep_label')}
-          sub={<>
-            {t('set_promo_single_ep_sub')}
-            <span style={{display:'block',fontStyle:'italic',opacity:0.65,marginTop:2}}>
-              {t('set_promo_single_ep_example')}
-            </span>
-          </>}
-          control={
-            <SelectField theme={T}
-              value={f.demote_single_episode_action || 'flag_only'}
-              onChange={v => set('demote_single_episode_action', v)}
-              options={[
-                { value: 'flag_only', label: t('set_promo_single_ep_opt_flag_only') },
-                { value: 'demote',    label: t('set_promo_single_ep_opt_demote') },
-              ]}/>
-          }/>
-
-        <SettingsRow theme={T} label={t('set_promo_demote_tolerate_last_ep_label')}
-          sub={<>
-            {t('set_promo_demote_tolerate_last_ep_sub')}
-            <span style={{display:'block',fontStyle:'italic',opacity:0.65,marginTop:2}}>
-              {t('set_promo_demote_tolerate_last_ep_example')}
-            </span>
-          </>}
-          control={
-            <Toggle theme={T}
-              on={f.demote_allow_last_episode_missing !== 'false'}
-              onChange={v => set('demote_allow_last_episode_missing', v ? 'true' : 'false')}/>
-          }/>
-
-        <SliderRow
-          label={t('set_promo_pct_threshold_label')}
-          sub={<>
-            {t('set_promo_pct_threshold_sub')}
-            <span style={{display:'block',fontStyle:'italic',opacity:0.65,marginTop:2}}>
-              {t('set_promo_pct_threshold_example')}
-            </span>
-          </>}
-          value={pctThreshold} min={5} max={50} unit="%"
-          onChange={v => set('demote_pct_threshold', String(v))}/>
-
-        <NumberRow
-          label={t('set_promo_multi_threshold_label')}
-          sub={<>
-            {t('set_promo_multi_threshold_sub')}
-            <span style={{display:'block',fontStyle:'italic',opacity:0.65,marginTop:2}}>
-              {t('set_promo_multi_threshold_example')}
-            </span>
-          </>}
-          value={multiThreshold} min={2} max={10}
-          onChange={v => set('demote_multi_episode_threshold', String(v))}/>
-
-        <NumberRow
-          label={t('set_promo_completed_threshold_label')}
-          sub={<>
-            {t('set_promo_completed_threshold_sub')}
-            <span style={{display:'block',fontStyle:'italic',opacity:0.65,marginTop:2}}>
-              {t('set_promo_completed_threshold_example')}
-            </span>
-          </>}
-          value={completedThresh} min={1} max={10}
-          onChange={v => set('demote_completed_threshold', String(v))}/>
 
         <SliderRow
           label={t('set_promo_cooldown_label')}

@@ -98,8 +98,7 @@ def demotion_check(series_id: int, db: Session = Depends(get_db), _: User = Depe
     if not s:
         raise HTTPException(404, "Series not found")
 
-    from ..services.promotion import _should_demote
-    from ..utils.settings_helper import read_setting as _rs
+    from ..services.promotion import _should_demote, _min_prefix
 
     dir_cache: dict[str, set[str]] = {}
     verdict, reason = _should_demote(s, db, dir_cache=dir_cache)
@@ -120,6 +119,7 @@ def demotion_check(series_id: int, db: Session = Depends(get_db), _: User = Depe
         for ep in eps_with_file
     ]
     missing_count = sum(1 for e in eps_info if not e["has_cs_sub"])
+    cs_prefix = next((i for i, e in enumerate(eps_info) if not e["has_cs_sub"]), len(eps_info))
 
     return {
         "series_id":           s.id,
@@ -132,12 +132,9 @@ def demotion_check(series_id: int, db: Session = Depends(get_db), _: User = Depe
         "episodes_with_file":  len(eps_with_file),
         "episodes_missing_cs": missing_count,
         "pct_missing":         round(missing_count / len(eps_with_file) * 100, 1) if eps_with_file else 0,
+        "cs_prefix":           cs_prefix,
         "thresholds": {
-            "pct_threshold":       int(_rs("demote_pct_threshold",             db) or "10"),
-            "multi_threshold":     int(_rs("demote_multi_episode_threshold",   db) or "2"),
-            "completed_threshold": int(_rs("demote_completed_threshold",       db) or "2"),
-            "allow_last_missing":  _rs("demote_allow_last_episode_missing",    db) != "false",
-            "single_action":       _rs("demote_single_episode_action",         db) or "flag_only",
+            "min_prefix":          _min_prefix(db),
         },
         "episodes": eps_info,
     }
