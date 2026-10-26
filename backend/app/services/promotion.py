@@ -94,6 +94,12 @@ def _ep_code(ep) -> str:
     return f"S{ep.season_number:02d}E{ep.episode_number:02d}"
 
 
+def _held_series(db: Session) -> set[int]:
+    from ..utils.settings_helper import read_setting as _rs
+    raw = _rs("promo_hold_series", db) or ""
+    return {int(x) for x in raw.replace(";", ",").split(",") if x.strip().isdigit()}
+
+
 def _qualifies_for_promotion(db: Session, series: Series) -> dict:
     """
     Return {"ok": True} or {"ok": False, "reason": str}.
@@ -130,6 +136,11 @@ def check_and_promote(db: Session, series: Series) -> dict:
     # Already promoted and no open issue → nothing to do
     if series.promoted and not series.has_issue:
         return {"action": "already_promoted", "series_id": series.id}
+
+    # Held back by hand (Nastavení → promo_hold_series: ID seriálů oddělená čárkou),
+    # e.g. while its Czech subtitles are known to belong to other episodes.
+    if series.id in _held_series(db):
+        return {"action": "held", "series_id": series.id}
 
     # Never promote a series that currently has an open Seerr issue —
     # this prevents the double-Discord notification (promoted then immediately demoted).

@@ -136,6 +136,7 @@ EDITABLE_KEYS: set[str] = {
     "promo_require_alass",             # bool — require alass sync before promotion (default false)
     "promo_min_episodes",              # int  — min absolute episode count with subs (default 1)
     "promo_min_prefix",                # int  — episodes in a row from S01E01 that must have CS subs; decides promotion AND demotion (default 1)
+    "promo_hold_series",               # str  — series IDs (comma-separated) never auto-promoted, e.g. subtitles under review
     # ── Demotion rules ────────────────────────────────────────────────────
     "demote_on_episode_error",         # str  — never / flag_only / after_x_episodes (default flag_only)
     "demote_episode_threshold",        # int  — episodes needed for after_x_episodes mode (default 3)
