@@ -69,6 +69,7 @@ from .routers import (
     qbittorrent, search, dashboard,
     quick_add, discover, watchlist, audit,
     libraries, public, newsletter_admin, backup, services, system, service_users,
+    movie_files,
 )
 
 settings = get_settings()
@@ -248,6 +249,7 @@ app.include_router(glossary.router)
 app.include_router(video_stream.router)
 app.include_router(episode_markers.router)
 app.include_router(logs.router)
+app.include_router(movie_files.router)
 app.include_router(qbittorrent.router)
 app.include_router(search.router)
 app.include_router(dashboard.router)

@@ -16,6 +16,7 @@ const NavIcon = ({ d, size = 15 }) => (
 
 const ICONS = {
   dash:    <><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/></>,
+  film:    <><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="7" y1="3" x2="7" y2="21"/><line x1="17" y1="3" x2="17" y2="21"/><line x1="2" y1="9" x2="7" y2="9"/><line x1="2" y1="15" x2="7" y2="15"/><line x1="17" y1="9" x2="22" y2="9"/><line x1="17" y1="15" x2="22" y2="15"/></>,
   library: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,
   discover: <><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></>,
   sched:   <><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>,
@@ -35,6 +36,7 @@ const ICONS = {
 const NAV_ITEMS = [
   { to: "/",          icon: ICONS.dash,     labelKey: "nav_dashboard" },
   { to: "/library",   icon: ICONS.library,  labelKey: "nav_library" },
+  { to: "/movies",    icon: ICONS.film,     labelKey: "nav_movies" },
   { to: "/discover",  icon: ICONS.discover, labelKey: "nav_discover" },
   { to: "/calendar",  icon: ICONS.cal,      labelKey: "nav_calendar" },
   { to: "/requests",  icon: ICONS.req,      labelKey: "nav_requests" },

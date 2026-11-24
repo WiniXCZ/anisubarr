@@ -174,6 +174,7 @@ EDITABLE_KEYS: set[str] = {
     "audit_log_retention_days",        # int  — jak dlouho držet záznamy v logu seriálů (výchozí 90)
     "audit_log_detail_retention_days", # int  — po kolika dnech zahodit objemné detaily hledání (výchozí 14)
     "subtitle_reconcile_delete_missing",  # bool — smazat záznamy titulků, jejichž soubor už neexistuje (výchozí true)
+    "movie_roots",                     # str  — složky s filmy pro záložku Filmy, oddělené čárkou (výchozí /media/media/movies,/media/media/anime_movies)
 }
 
 # Klíče jejichž hodnoty se maskují (zobrazí jen posledních 4 znaků)
