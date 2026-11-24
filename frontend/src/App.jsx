@@ -7,6 +7,7 @@ import { getSetupStatus } from "./api/client";
 import Login from "./pages/Login";
 import SetupWizard from "./pages/SetupWizard";
 import Dashboard from "./pages/Dashboard";
+import Movies from "./pages/Movies";
 import Library from "./pages/Library";
 import SeriesDetail from "./pages/SeriesDetail";
 import Calendar from "./pages/Calendar";
@@ -74,6 +75,7 @@ export default function App() {
                   <Routes>
                     <Route path="/"           element={<Dashboard />} />
                     <Route path="/library"    element={<Library />} />
+                    <Route path="/movies"     element={<Movies />} />
                     <Route path="/series/:id" element={<SeriesDetail />} />
                     <Route path="/calendar"   element={<Calendar />} />
                     <Route path="/requests"   element={<Requests />} />

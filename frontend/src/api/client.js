@@ -289,3 +289,9 @@ export const runAuditCheckAll   = ()         => api.post("/audit/check");
 export const runAuditCheck      = (seriesId) => api.post(`/audit/check/${seriesId}`);
 
 export default api;
+
+// ── Filmy (sken souborů filmů) ────────────
+export const getMovieFiles       = ()                 => api.get("/movie-files", { timeout: 60_000 });
+export const getMovieScanStatus  = ()                 => api.get("/movie-files/status");
+export const startMovieScan      = (verify = false)   => api.post(`/movie-files/scan?verify=${verify ? "true" : "false"}`);
+export const rescanMovieFile     = (id, verify = true) => api.post(`/movie-files/${id}/rescan?verify=${verify ? "true" : "false"}`, null, { timeout: 600_000 });

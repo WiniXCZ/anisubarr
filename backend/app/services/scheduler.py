@@ -725,6 +725,35 @@ def job_reconcile_subtitles():
         job_log.update_message(run_id, ", ".join(parts))
 
 
+
+
+def _movie_scan_job(job_id: str, verify_files: bool):
+    from ..database import SessionLocal
+    from . import job_log, movie_scan
+
+    run_id = job_log.current_run_id(job_id)
+
+    def progress(i, total, msg):
+        if run_id:
+            job_log.update_progress(run_id, i, total, msg)
+
+    db = SessionLocal()
+    try:
+        rep = movie_scan.scan(db, verify_files=verify_files, progress=progress)
+    finally:
+        db.close()
+    if run_id:
+        job_log.update_message(run_id, movie_scan.report_text(rep))
+
+
+def job_movie_scan():
+    """Read every movie file: resolution, HDR, audio languages and channels, subtitles."""
+    _movie_scan_job("movie_scan", verify_files=False)
+
+
+def job_movie_verify():
+    """Like movie_scan, plus check each changed file is playable and not zero-filled."""
+    _movie_scan_job("movie_verify", verify_files=True)
 def job_prune_audit_log():
     """Drop audit rows nobody will read again.
 
@@ -870,6 +899,23 @@ JOB_REGISTRY: dict[str, dict] = {
         "interval":    "daily",
         "hour":        4,
         "minute":      50,
+    },
+    "movie_scan": {
+        "fn":          job_movie_scan,
+        "name":        "Sken filmů",
+        "description": "Projde soubory filmů na disku: rozlišení, HDR, jazyky a kanály zvuku, titulky (záložka Filmy)",
+        "interval":    "daily",
+        "hour":        5,
+        "minute":      10,
+    },
+    "movie_verify": {
+        "fn":          job_movie_verify,
+        "name":        "Ověření filmů",
+        "description": "Jako sken filmů, navíc u změněných souborů ověří přehratelnost (začátek, střed, konec) a vynulovaná místa",
+        "interval":    "weekly",
+        "day_of_week": 6,  # neděle
+        "hour":        1,
+        "minute":      20,
     },
     "reconcile_subtitles": {
         "fn":          job_reconcile_subtitles,
